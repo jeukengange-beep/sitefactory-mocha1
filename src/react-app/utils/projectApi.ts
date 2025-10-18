@@ -1,4 +1,5 @@
 import type { UpdateProjectRequest } from '@/shared/types';
+import { apiFetch } from '@/react-app/utils/apiClient';
 
 type PersistOptions = {
   errorMessage?: string;
@@ -17,7 +18,7 @@ export async function persistProjectUpdate(
   const idAsString = String(projectId);
 
   try {
-    const response = await fetch(`/api/projects/${idAsString}`, {
+    const response = await apiFetch(`/api/projects/${idAsString}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

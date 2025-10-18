@@ -16,3 +16,7 @@ To start both the Vite server and the worker together, use the combined command:
 npm run dev:full
 ```
 This script runs `wrangler dev` and `npm run dev` in parallel. When both processes are running, any frontend fetch to `/api/...` will be routed through the Vite proxy to the worker, and you can observe the corresponding requests in the Wrangler logs.
+
+### Deployment configuration
+
+If you deploy the React frontend separately from the Cloudflare Worker (for example on Vercel), expose the worker origin through the `VITE_API_BASE_URL` environment variable. Set it to the fully qualified base URL of your worker, such as `https://your-worker.workers.dev`. All frontend API calls will automatically prefix this value, while the local development proxy continues to work when the variable is unset.

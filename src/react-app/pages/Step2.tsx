@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'framer-motion';
 import { ArrowRight, ArrowLeft } from 'lucide-react';
-import type { StructuredProfile } from '@/shared/types';
+import type { Project, StructuredProfile } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
 import { persistProjectUpdate } from '@/react-app/utils/projectApi';
+import { apiFetch } from '@/react-app/utils/apiClient';
 
 export default function Step2() {
   const { t } = useTranslation();
@@ -19,76 +20,111 @@ export default function Step2() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Load saved answers from localStorage
-    const savedProject = localStorage.getItem('currentProject');
-    if (savedProject) {
-      const project = JSON.parse(savedProject);
-      const projectSiteType = project.siteType ?? project.site_type;
-      const projectLanguage = project.language ?? project.lang ?? 'fr';
+    const controller = new AbortController();
 
-      project.siteType = projectSiteType;
-      project.language = projectLanguage;
-      project.id = project.id ?? (projectId ? Number(projectId) : projectId);
-      if (project.deepAnswers) {
-        setDeepAnswers(project.deepAnswers);
+    const loadProject = async () => {
+      if (!projectId) {
+        navigate('/new/step1');
+        return;
       }
-    }
-  }, [projectId]);
+
+      setIsFetching(true);
+      setError(null);
+
+      try {
+        const response = await apiFetch(`/api/projects/by-id/${projectId}`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to load project (status ${response.status})`);
+        }
+
+        const projectData: Project = await response.json();
+
+        setProject(projectData);
+        setDeepAnswers(projectData.deepAnswers ?? '');
+        localStorage.setItem('currentProject', JSON.stringify(projectData));
+      } catch (fetchError) {
+        console.error('Error loading project for step 2:', fetchError);
+
+        const savedProject = localStorage.getItem('currentProject');
+        if (savedProject) {
+          try {
+            const localProject = JSON.parse(savedProject) as Project;
+            if (!localProject.id && projectId) {
+              localProject.id = Number(projectId);
+            }
+
+            setProject(localProject);
+            setDeepAnswers(localProject.deepAnswers ?? '');
+          } catch (parseError) {
+            console.error('Unable to parse project from localStorage:', parseError);
+            setError(
+              t('step2.loadError', {
+                defaultValue: 'Impossible de charger votre projet. Veuillez recommencer.',
+              })
+            );
+          }
+        } else {
+          setError(
+            t('step2.loadError', {
+              defaultValue: 'Impossible de charger votre projet. Veuillez recommencer.',
+            })
+          );
+        }
+      } finally {
+        setIsFetching(false);
+      }
+    };
+
+    loadProject();
+
+    return () => controller.abort();
+  }, [navigate, projectId, t]);
 
   const handleBack = () => {
     navigate('/new/step1');
   };
 
   const handleContinue = async () => {
-    if (!project || deepAnswers.length < 50) return;
+    if (!project || deepAnswers.trim().length < 50) {
+      return;
+    }
 
     setIsLoading(true);
     setError(null);
     try {
-      const savedProject = localStorage.getItem('currentProject');
-      if (!savedProject) {
-        console.log('No saved project found, redirecting to step 1');
-        navigate('/new/step1');
-        return;
-      }
+      const projectSiteType = project.siteType;
+      const projectLanguage = project.language;
 
-      const project = JSON.parse(savedProject);
-      const projectSiteType = project.siteType ?? project.site_type;
-      const projectLanguage = project.language ?? project.lang ?? 'fr';
-      project.siteType = projectSiteType;
-      project.language = projectLanguage;
-      project.id = project.id ?? (projectId ? Number(projectId) : projectId);
-      console.log('Current project:', project);
-      console.log('Project ID from params:', projectId);
+      const updatedProject: Project = {
+        ...project,
+        deepAnswers,
+      };
 
-      // Save answers immediately to localStorage
-      project.deepAnswers = deepAnswers;
-      localStorage.setItem('currentProject', JSON.stringify(project));
+      localStorage.setItem('currentProject', JSON.stringify(updatedProject));
 
-      let structuredProfile: StructuredProfile | undefined;
+      let structuredProfile: StructuredProfile | null = project.structuredProfile;
 
-      try {
-        const analyzeResponse = await fetch('/api/analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            deepAnswers,
-            siteType: projectSiteType,
-            language: projectLanguage
-          })
-        });
+      if (!structuredProfile) {
+        try {
+          const analyzeResponse = await apiFetch('/api/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              deepAnswers,
+              siteType: projectSiteType,
+              language: projectLanguage,
+            }),
+          });
 
-        if (analyzeResponse.ok) {
-          console.log('Analysis successful');
-          structuredProfile = await analyzeResponse.json();
-          console.log('Structured profile:', structuredProfile);
-        } else {
-          console.log('Analysis failed, continuing without structured profile');
+          if (analyzeResponse.ok) {
+            structuredProfile = await analyzeResponse.json();
+          }
+        } catch (analysisError) {
+          console.error('Analysis error:', analysisError);
         }
-
-        profile = await analyzeResponse.json();
-      } catch (analysisError) {
-        console.error('Analysis error:', analysisError);
       }
 
       if (!structuredProfile) {
@@ -102,41 +138,45 @@ export default function Step2() {
           keyHighlights: ['Qualité', 'Professionnalisme', 'Innovation'],
           recommendedCTA: 'Nous contacter',
           colors: ['#3B82F6', '#8B5CF6', '#EF4444'],
-          lang: projectLanguage || 'fr'
+          sections: [],
+          lang: projectLanguage,
         };
       }
 
-      // Save structured profile to project
-      project.structuredProfile = structuredProfile;
-      localStorage.setItem('currentProject', JSON.stringify(project));
+      const projectIdToPersist = projectId ?? project.id;
 
-      const persisted = await persistProjectUpdate(projectId ?? project.id, {
-        deepAnswers,
-        structuredProfile,
-      }, {
-        errorMessage: t('errors.backendSaveFailed', {
-          defaultValue: 'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.'
-        })
-      });
+      updatedProject.structuredProfile = structuredProfile;
+      localStorage.setItem('currentProject', JSON.stringify(updatedProject));
+      setProject(updatedProject);
 
-      if (persisted) {
-        console.log('Backend save successful');
-      }
+      await persistProjectUpdate(
+        projectIdToPersist,
+        {
+          deepAnswers,
+          structuredProfile,
+        },
+        {
+          errorMessage: t('errors.backendSaveFailed', {
+            defaultValue:
+              'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.',
+          }),
+        }
+      );
 
-      const nextProjectId = projectId ?? project.id;
-      console.log('Navigating to step 3...', nextProjectId);
-      navigate(`/new/step3/${nextProjectId}`);
+      navigate(`/new/step3/${projectIdToPersist}`);
     } catch (error) {
       console.error('Error in handleContinue:', error);
-      // Force navigation with minimal project
-      const fallbackProjectId = projectId ?? Date.now();
-      navigate(`/new/step3/${fallbackProjectId}`);
+      setError(
+        t('step2.saveError', {
+          defaultValue: "Impossible d'enregistrer vos réponses. Veuillez réessayer.",
+        })
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
-  const isValid = deepAnswers.length >= 50 && !isFetching;
+  const isValid = useMemo(() => deepAnswers.trim().length >= 50 && !isFetching, [deepAnswers, isFetching]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 relative overflow-hidden">
