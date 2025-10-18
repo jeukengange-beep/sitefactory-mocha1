@@ -2,16 +2,28 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { nanoid } from "nanoid";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { 
-  CreateProjectRequestSchema, 
+import {
+  CreateProjectRequestSchema,
   UpdateProjectRequestSchema,
   AnalyzeRequestSchema,
   InspirationsRequestSchema,
   GenerateImagesRequestSchema,
-  type Inspiration
+  type Inspiration,
+  type StructuredProfile,
+  type AnalyzeRequest
 } from "@/shared/types";
+import { GoogleImageGeneration } from "./imageGeneration";
 
-const app = new Hono<{ Bindings: Env }>();
+type WorkerBindings = {
+  GOOGLE_AI_API_KEY?: string;
+  DB: any;
+  R2_BUCKET: any;
+};
+
+type GenerativeModel = ReturnType<GoogleGenerativeAI["getGenerativeModel"]>;
+const imageGenerationService = new GoogleImageGeneration();
+
+const app = new Hono<{ Bindings: WorkerBindings }>();
 
 app.use("*", cors());
 
@@ -24,25 +36,38 @@ app.post("/api/projects", async (c) => {
     const slug = nanoid(12);
     const now = new Date().toISOString();
     
-    const project = {
-      id: Date.now(), // In production, use proper ID generation
-      slug,
-      site_type: data.siteType,
-      language: data.language,
-      status: 'draft',
-      created_at: now,
-      updated_at: now
-    };
-
     // Insert into database
     const insertSql = `
-      INSERT INTO projects (slug, site_type, language, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO projects (
+        slug,
+        site_type,
+        language,
+        status,
+        created_at,
+        updated_at,
+        deep_answers,
+        structured_profile,
+        selected_inspirations,
+        generated_images
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
-    
-    await c.env.DB.prepare(insertSql)
+
+    const insertResult = await c.env.DB.prepare(insertSql)
       .bind(slug, data.siteType, data.language, 'draft', now, now)
       .run();
+
+    const projectId = insertResult.meta?.last_row_id;
+
+    const project = {
+      id: projectId ?? Date.now(),
+      slug,
+      siteType: data.siteType,
+      language: data.language,
+      status: 'draft' as const,
+      createdAt: now,
+      updatedAt: now,
+    };
 
     return c.json(project);
   } catch (error) {
@@ -60,29 +85,54 @@ app.patch("/api/projects/:id", async (c) => {
     const now = new Date().toISOString();
     
     let updateSql = "UPDATE projects SET updated_at = ?";
-    const params: any[] = [now];
-    
+    const params: (string | null)[] = [now];
+
     if (data.deepAnswers !== undefined) {
       updateSql += ", deep_answers = ?";
-      params.push(data.deepAnswers);
+      params.push(data.deepAnswers ?? null);
     }
     
+    if (data.structuredProfile !== undefined) {
+      updateSql += ", structured_profile = ?";
+      const structuredProfileValue = typeof data.structuredProfile === "string"
+        ? data.structuredProfile
+        : JSON.stringify(data.structuredProfile);
+      params.push(structuredProfileValue);
+    }
+
     if (data.selectedInspirations !== undefined) {
       updateSql += ", selected_inspirations = ?";
-      params.push(JSON.stringify(data.selectedInspirations));
+      params.push(
+        data.selectedInspirations ? JSON.stringify(data.selectedInspirations) : null
+      );
+    }
+
+    if (data.generatedImages !== undefined) {
+      updateSql += ", generated_images = ?";
+      params.push(JSON.stringify(data.generatedImages));
     }
     
     if (data.status !== undefined) {
       updateSql += ", status = ?";
       params.push(data.status);
     }
-    
+
     updateSql += " WHERE id = ?";
     params.push(projectId);
-    
+
     await c.env.DB.prepare(updateSql).bind(...params).run();
-    
-    return c.json({ success: true });
+
+    const updatedRow = await c.env.DB.prepare(
+      "SELECT * FROM projects WHERE id = ?"
+    )
+      .bind(projectId)
+      .first<DbProjectRow>();
+
+    if (!updatedRow) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    return c.json(mapProjectFromRow(updatedRow));
   } catch (error) {
     console.error('Error updating project:', error);
     return c.json({ error: 'Failed to update project' }, 500);
@@ -92,26 +142,52 @@ app.patch("/api/projects/:id", async (c) => {
 app.get("/api/projects/:slug", async (c) => {
   try {
     const slug = c.req.param("slug");
-    
+
     const result = await c.env.DB.prepare(
       "SELECT * FROM projects WHERE slug = ?"
     ).bind(slug).first();
-    
+
     if (!result) {
       return c.json({ error: 'Project not found' }, 404);
     }
-    
-    // Parse JSON fields
+
+    // Parse JSON fields and normalize casing
     const project = {
-      ...result,
-      structuredProfile: result.structured_profile ? JSON.parse(result.structured_profile as string) : null,
-      selectedInspirations: result.selected_inspirations ? JSON.parse(result.selected_inspirations as string) : null,
-      generatedImages: result.generated_images ? JSON.parse(result.generated_images as string) : null,
+      id: result.id,
+      slug: result.slug,
+      siteType: result.site_type,
+      deepAnswers: result.deep_answers ?? undefined,
+      structuredProfile: result.structured_profile ? JSON.parse(result.structured_profile as string) : undefined,
+      selectedInspirations: result.selected_inspirations ? JSON.parse(result.selected_inspirations as string) : undefined,
+      generatedImages: result.generated_images ? JSON.parse(result.generated_images as string) : undefined,
+      language: result.language,
+      status: result.status,
+      createdAt: result.created_at,
+      updatedAt: result.updated_at,
     };
-    
+
     return c.json(project);
   } catch (error) {
     console.error('Error fetching project:', error);
+    return c.json({ error: 'Failed to fetch project' }, 500);
+  }
+});
+
+app.get("/api/projects/by-id/:id", async (c) => {
+  try {
+    const projectId = c.req.param("id");
+
+    const result = await c.env.DB.prepare(
+      "SELECT * FROM projects WHERE id = ?"
+    ).bind(projectId).first<DbProjectRow>();
+
+    if (!result) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    return c.json(mapProjectFromRow(result));
+  } catch (error) {
+    console.error('Error fetching project by id:', error);
     return c.json({ error: 'Failed to fetch project' }, 500);
   }
 });
@@ -122,8 +198,11 @@ app.post("/api/analyze", async (c) => {
     const body = await c.req.json();
     const data = AnalyzeRequestSchema.parse(body);
     
-    const genAI = new GoogleGenerativeAI((c.env as any).GOOGLE_AI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = getGenerativeModel(c.env);
+
+    if (!model) {
+      return c.json(generateFallbackStructuredProfile(data));
+    }
     
     const prompt = `
 Analyze the following user input and generate a structured profile for a ${data.siteType} website in ${data.language === 'fr' ? 'French' : 'English'}.
@@ -163,16 +242,21 @@ Return a JSON object with the following structure:
 Respond with only the JSON object, no additional text.
 `;
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    
-    // Clean up the response to extract JSON
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    const jsonText = jsonMatch ? jsonMatch[0] : text;
-    
-    const structuredProfile = JSON.parse(jsonText);
-    return c.json(structuredProfile);
+    try {
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+
+      // Clean up the response to extract JSON
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      const jsonText = jsonMatch ? jsonMatch[0] : text;
+
+      const structuredProfile = JSON.parse(jsonText);
+      return c.json(structuredProfile);
+    } catch (modelError) {
+      console.error('Error analyzing input with AI, using fallback:', modelError);
+      return c.json(generateFallbackStructuredProfile(data));
+    }
     
   } catch (error) {
     console.error('Error analyzing input:', error);
@@ -189,20 +273,25 @@ app.post("/api/inspirations", async (c) => {
     const profile = data.structuredProfile;
     
     // Use our curated database of real inspirations
-    const inspirations = await selectInspirationsFromDatabase(c.env.DB, profile);
-    
-    if (inspirations.length >= 5) {
+    let inspirations = await selectInspirationsFromDatabase(c.env.DB, profile);
+
+    const remaining = Math.max(0, 5 - inspirations.length);
+
+    if (remaining === 0) {
       return c.json(inspirations.slice(0, 5));
     }
-    
-    // If we don't have enough from database, supplement with AI-generated ones
-    const genAI = new GoogleGenerativeAI((c.env as any).GOOGLE_AI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-    
+
+    const model = getGenerativeModel(c.env);
+
+    if (!model) {
+      const fallbackInspirations = generateFallbackInspirations(profile, remaining);
+      return c.json([...inspirations, ...fallbackInspirations].slice(0, 5));
+    }
+
     const isPersonal = profile.siteName?.toLowerCase().includes('portfolio') || profile.tone?.includes('personal');
-    
+
     const prompt = `
-Based on this website profile, generate ${5 - inspirations.length} additional realistic website inspirations:
+Based on this website profile, generate ${remaining} additional realistic website inspirations:
 
 Profile: ${JSON.stringify(profile, null, 2)}
 
@@ -232,18 +321,19 @@ Respond with only the JSON array, no additional text.
       const result = await model.generateContent(prompt);
       const response = await result.response;
       const text = response.text();
-      
+
       const jsonMatch = text.match(/\[[\s\S]*\]/);
       const jsonText = jsonMatch ? jsonMatch[0] : text;
-      
+
       const aiInspirations: Inspiration[] = JSON.parse(jsonText);
-      const combinedInspirations = [...inspirations, ...aiInspirations].slice(0, 5);
-      
-      return c.json(combinedInspirations);
+      inspirations = [...inspirations, ...aiInspirations];
     } catch (parseError) {
-      console.error('Error parsing AI inspirations, using database only:', parseError);
-      return c.json(inspirations.slice(0, 5));
+      console.error('Error generating AI inspirations, using fallback:', parseError);
+      const fallbackInspirations = generateFallbackInspirations(profile, remaining);
+      inspirations = [...inspirations, ...fallbackInspirations];
     }
+
+    return c.json(inspirations.slice(0, 5));
     
   } catch (error) {
     console.error('Error fetching inspirations:', error);
@@ -257,64 +347,11 @@ app.post("/api/generate", async (c) => {
     const body = await c.req.json();
     const data = GenerateImagesRequestSchema.parse(body);
 
-    // Generate sophisticated contextual images based on profile analysis
-    const generatedImages: any[] = [];
-    
-    const profile = data.structuredProfile;
-    const isPersonal = profile.siteName?.toLowerCase().includes('portfolio') || 
-                      profile.tone?.includes('personal') ||
-                      profile.primaryGoal?.toLowerCase().includes('portfolio');
-    
-    // Generate overview image with sophisticated selection
-    try {
-      // Use curated high-quality images with intelligent selection based on profile
-      const contextualImages = await selectContextualImages(profile, isPersonal);
-      
-      generatedImages.push({
-        id: 'overview',
-        type: 'overview',
-        url: contextualImages.overview,
-        filename: 'site-overview.png'
-      });
+    const generatedImages = await imageGenerationService.generateImages(
+      data.structuredProfile,
+      data.selectedInspirations ?? []
+    );
 
-      // Generate section images
-      if (profile.sections && profile.sections.length > 0) {
-        profile.sections.slice(0, 4).forEach((section: any, index: number) => {
-          generatedImages.push({
-            id: section.id,
-            type: 'section',
-            sectionId: section.id,
-            url: contextualImages.sections[index] || contextualImages.sections[0],
-            filename: `${section.id}-section.png`
-          });
-        });
-      }
-
-    } catch (imageError) {
-      console.error('Image generation error:', imageError);
-      // Fallback to curated selection
-      const fallbackImages = await selectContextualImages(profile, isPersonal);
-      
-      generatedImages.push({
-        id: 'overview',
-        type: 'overview',
-        url: fallbackImages.overview,
-        filename: 'site-overview.png'
-      });
-
-      if (profile.sections) {
-        profile.sections.slice(0, 4).forEach((section: any, index: number) => {
-          generatedImages.push({
-            id: section.id,
-            type: 'section',
-            sectionId: section.id,
-            url: fallbackImages.sections[index] || fallbackImages.sections[0],
-            filename: `${section.id}-section.png`
-          });
-        });
-      }
-    }
-    
     return c.json(generatedImages);
   } catch (error) {
     console.error('Error generating images:', error);
@@ -322,79 +359,249 @@ app.post("/api/generate", async (c) => {
   }
 });
 
-// Smart contextual image selection based on profile analysis
-async function selectContextualImages(profile: any, isPersonal: boolean) {
-  const imageCollections = {
-    personal: {
-      creative: [
-        'https://images.unsplash.com/photo-1558655146-d09347e92766?w=800&h=600&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1571171637578-41bc2dd41cd2?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1574169208507-84376144848b?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1542744173-8e7e53415bb0?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=800&h=400&fit=crop&auto=format&q=80'
-      ],
-      minimal: [
-        'https://images.unsplash.com/photo-1586717791821-3f44a563fa4c?w=800&h=600&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1552664730-d307ca884978?w=800&h=400&fit=crop&auto=format&q=80'
-      ],
-      modern: [
-        'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=800&h=600&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1552664730-d307ca884978?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1586717791821-3f44a563fa4c?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1574169208507-84376144848b?w=800&h=400&fit=crop&auto=format&q=80'
-      ]
-    },
-    business: {
-      corporate: [
-        'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=800&h=600&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1586717791821-3f44a563fa4c?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1552664730-d307ca884978?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1574169208507-84376144848b?w=800&h=400&fit=crop&auto=format&q=80'
-      ],
-      modern: [
-        'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=800&h=600&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1552664730-d307ca884978?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1586717791821-3f44a563fa4c?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=800&h=400&fit=crop&auto=format&q=80'
-      ],
-      minimal: [
-        'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=800&h=600&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1586717791821-3f44a563fa4c?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=800&h=400&fit=crop&auto=format&q=80',
-        'https://images.unsplash.com/photo-1552664730-d307ca884978?w=800&h=400&fit=crop&auto=format&q=80'
-      ]
-    }
-  };
+function getGenerativeModel(env: WorkerBindings): GenerativeModel | null {
+  const apiKey = env.GOOGLE_AI_API_KEY;
 
-  // Analyze style from profile
-  const tone = profile.tone?.toLowerCase() || '';
-  let style = 'modern';
-  
-  if (tone.includes('minimal') || tone.includes('épuré')) style = 'minimal';
-  else if (tone.includes('creative') || tone.includes('créatif')) style = 'creative';
-  else if (tone.includes('corporate') || tone.includes('professionnel')) style = 'corporate';
+  if (!apiKey) {
+    console.warn('GOOGLE_AI_API_KEY is not set. Falling back to deterministic responses.');
+    return null;
+  }
 
-  const category = isPersonal ? 'personal' : 'business';
-  const selectedCollection = (imageCollections as any)[category][style] || (imageCollections as any)[category].modern;
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    return genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+  } catch (error) {
+    console.error('Failed to initialise GoogleGenerativeAI:', error);
+    return null;
+  }
+}
+
+function generateFallbackStructuredProfile(request: AnalyzeRequest): StructuredProfile {
+  const isFrench = request.language === 'fr';
+  const isPersonal = request.siteType === 'personal';
+  const summary = request.deepAnswers.split(/\n+/).map((line) => line.trim()).find(Boolean) || '';
+  const description = request.deepAnswers.trim() || (isFrench ? 'Décrivez votre projet ici.' : 'Describe your project here.');
+
+  const siteName = isPersonal
+    ? (isFrench ? 'Portfolio Signature' : 'Signature Portfolio')
+    : (isFrench ? 'Agence Moderne' : 'Modern Agency');
+
+  const tone = isPersonal
+    ? (isFrench ? 'Créatif et authentique' : 'Creative and authentic')
+    : (isFrench ? 'Professionnel et moderne' : 'Professional and modern');
+
+  const ambience = isPersonal
+    ? (isFrench ? 'Ambiance visuelle chaleureuse et immersive' : 'Warm and immersive visual atmosphere')
+    : (isFrench ? 'Ambiance visuelle nette et confiante' : 'Clean and confident visual atmosphere');
+
+  const primaryGoal = isPersonal
+    ? (isFrench ? 'Mettre en valeur votre parcours et vos réalisations' : 'Highlight your background and work')
+    : (isFrench ? 'Présenter clairement votre offre et générer des opportunités' : 'Present your offering clearly and generate opportunities');
+
+  const keyHighlights = isFrench
+    ? [
+        'Structure générée automatiquement pour démarrer rapidement.',
+        isPersonal ? 'Met en avant votre personnalité et votre histoire.' : 'Renforce la crédibilité auprès de vos clients.',
+        'Sections pensées pour convertir les visiteurs.'
+      ]
+    : [
+        'Auto-generated structure to help you start quickly.',
+        isPersonal ? 'Highlights your personality and story.' : 'Builds credibility with your clients.',
+        'Sections designed to convert visitors.'
+      ];
+
+  const recommendedCTA = isPersonal
+    ? (isFrench ? 'Découvrir mon travail' : 'Explore my work')
+    : (isFrench ? 'Discuter de votre projet' : 'Discuss your project');
+
+  const colors = isPersonal
+    ? ['#A855F7', '#1E293B', '#F472B6']
+    : ['#1D4ED8', '#0F172A', '#FACC15'];
+
+  const sections: StructuredProfile['sections'] = isPersonal
+    ? [
+        {
+          id: 'hero',
+          title: isFrench ? 'Accueil' : 'Hero',
+          content: isFrench
+            ? `Introduction concise mettant en avant ${summary || 'votre proposition de valeur'}.`
+            : `Concise introduction that highlights ${summary || 'your key value proposition'}.`,
+          mediaHint: isFrench ? 'Portrait ou scène de travail créative' : 'Portrait or creative working scene'
+        },
+        {
+          id: 'about',
+          title: isFrench ? 'À propos' : 'About',
+          content: isFrench
+            ? 'Racontez votre histoire, votre parcours et ce qui vous rend unique.'
+            : 'Share your story, background, and what sets you apart.',
+          mediaHint: isFrench ? 'Photos lifestyle ou espace de travail' : 'Lifestyle or workspace photography'
+        },
+        {
+          id: 'work',
+          title: isFrench ? 'Réalisations' : 'Work',
+          content: isFrench
+            ? 'Présentez vos projets phares avec un résumé de leur impact.'
+            : 'Showcase flagship projects with a short impact summary.',
+          mediaHint: isFrench ? 'Vignettes de projets ou maquettes visuelles' : 'Project thumbnails or visual mockups'
+        },
+        {
+          id: 'services',
+          title: isFrench ? 'Offre' : 'Services',
+          content: isFrench
+            ? 'Décrivez clairement les services ou prestations que vous proposez.'
+            : 'Clearly describe the services or offerings you provide.',
+          mediaHint: isFrench ? 'Icônes personnalisées ou visuels abstraits' : 'Custom icons or abstract visuals'
+        },
+        {
+          id: 'contact',
+          title: isFrench ? 'Contact' : 'Contact',
+          content: isFrench
+            ? 'Invitez les visiteurs à vous contacter via un formulaire simple ou un lien direct.'
+            : 'Invite visitors to contact you through a form or direct link.',
+          mediaHint: isFrench ? 'Visuel d’interface épuré' : 'Clean interface visual'
+        }
+      ]
+    : [
+        {
+          id: 'hero',
+          title: isFrench ? 'Accueil' : 'Hero',
+          content: isFrench
+            ? `Positionnez clairement votre offre et votre bénéfice clé pour les clients.`
+            : 'Position your offer and the key benefit for clients clearly.',
+          mediaHint: isFrench ? 'Image d’équipe ou bureau professionnel' : 'Team or professional office imagery'
+        },
+        {
+          id: 'services',
+          title: isFrench ? 'Services' : 'Services',
+          content: isFrench
+            ? 'Présentez vos services phares avec une courte description orientée résultats.'
+            : 'Present your core services with a results-oriented description.',
+          mediaHint: isFrench ? 'Illustrations de service ou icônes premium' : 'Service illustrations or premium icons'
+        },
+        {
+          id: 'about',
+          title: isFrench ? 'Notre approche' : 'Our Approach',
+          content: isFrench
+            ? 'Expliquez votre méthodologie, votre expérience et les preuves de confiance.'
+            : 'Explain your methodology, experience, and trust indicators.',
+          mediaHint: isFrench ? 'Photos d’équipe ou process visuels' : 'Team photography or process visuals'
+        },
+        {
+          id: 'testimonials',
+          title: isFrench ? 'Témoignages' : 'Testimonials',
+          content: isFrench
+            ? 'Ajoutez des avis clients ou des chiffres clés pour rassurer.'
+            : 'Add client quotes or key figures to reassure prospects.',
+          mediaHint: isFrench ? 'Portraits clients ou citations stylisées' : 'Client portraits or stylised quotes'
+        },
+        {
+          id: 'contact',
+          title: isFrench ? 'Contact' : 'Contact',
+          content: isFrench
+            ? 'Offrez un formulaire rapide ou un lien de prise de rendez-vous.'
+            : 'Provide a quick form or scheduling link.',
+          mediaHint: isFrench ? 'Interface claire et rassurante' : 'Clear, trustworthy interface imagery'
+        }
+      ];
 
   return {
-    overview: selectedCollection[0],
-    sections: selectedCollection.slice(1)
+    siteName,
+    tagline: isPersonal
+      ? (isFrench ? 'Créez une présence en ligne mémorable' : 'Craft a memorable online presence')
+      : (isFrench ? 'Accélérez la croissance de votre activité' : 'Accelerate your business growth'),
+    description,
+    tone,
+    ambience,
+    primaryGoal,
+    keyHighlights,
+    recommendedCTA,
+    colors,
+    sections,
+    lang: request.language,
   };
 }
 
+function generateFallbackInspirations(profile: StructuredProfile, count: number): Inspiration[] {
+  const isFrench = profile.lang === 'fr';
+  const toneDescriptor = profile.tone?.toLowerCase() || (isFrench ? 'moderne' : 'modern');
+  const ambienceDescriptor = profile.ambience?.toLowerCase() || (isFrench ? 'immersive' : 'immersive');
+  const primaryColor = profile.colors?.[0];
+  const colorSnippet = primaryColor ? (isFrench ? ` autour de ${primaryColor}` : ` around ${primaryColor}`) : '';
+
+  const personalTemplates = [
+    {
+      title: isFrench ? 'Studio Créatif Horizon' : 'Horizon Creative Studio',
+      domain: isFrench ? 'studio-horizon.fr' : 'horizon-studio.com',
+      image: 'https://images.unsplash.com/photo-1574169208507-84376144848b?w=800&h=400&fit=crop&auto=format&q=80'
+    },
+    {
+      title: isFrench ? 'Portfolio Nouvelle Vague' : 'New Wave Portfolio',
+      domain: isFrench ? 'portfolio-nouvellevague.com' : 'newwave-portfolio.com',
+      image: 'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=800&h=400&fit=crop&auto=format&q=80'
+    },
+    {
+      title: isFrench ? 'Atelier Signature' : 'Signature Atelier',
+      domain: isFrench ? 'atelier-signature.fr' : 'signature-atelier.com',
+      image: 'https://images.unsplash.com/photo-1552664730-d307ca884978?w=800&h=400&fit=crop&auto=format&q=80'
+    }
+  ];
+
+  const businessTemplates = [
+    {
+      title: isFrench ? 'Agence Nova Impact' : 'Nova Impact Agency',
+      domain: isFrench ? 'nova-impact.fr' : 'novaimpact.agency',
+      image: 'https://images.unsplash.com/photo-1521737604893-d14cc237f11d?w=800&h=400&fit=crop&auto=format&q=80'
+    },
+    {
+      title: isFrench ? 'Cabinet Stratège' : 'Strategist Collective',
+      domain: isFrench ? 'cabinet-stratege.com' : 'strategist-collective.com',
+      image: 'https://images.unsplash.com/photo-1483478550801-ceba5fe50e8e?w=800&h=400&fit=crop&auto=format&q=80'
+    },
+    {
+      title: isFrench ? 'Solutions Altitude' : 'Altitude Solutions',
+      domain: isFrench ? 'solutions-altitude.com' : 'altitude-solutions.co',
+      image: 'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=800&h=400&fit=crop&auto=format&q=80'
+    }
+  ];
+
+  const templates = profile.siteName?.toLowerCase().includes('portfolio') || profile.primaryGoal?.toLowerCase().includes('portfolio')
+    ? personalTemplates
+    : businessTemplates;
+
+  return Array.from({ length: count }, (_, index) => {
+    const template = templates[index % templates.length];
+    const justification = isFrench
+      ? `${template.title} propose un design ${toneDescriptor}${colorSnippet} avec une ambiance ${ambienceDescriptor}, idéal pour prolonger l'univers de ${profile.siteName || 'votre projet'}.`
+      : `${template.title} delivers a ${toneDescriptor} look${colorSnippet} with a ${ambienceDescriptor} atmosphere, making it a strong extension of ${profile.siteName || 'your project'}.`;
+
+    return {
+      id: `fallback_${index}`,
+      title: template.title,
+      domain: template.domain,
+      image: template.image,
+      justification
+    };
+  });
+}
+
 // Helper function to select inspirations from database
-async function selectInspirationsFromDatabase(db: any, profile: any): Promise<Inspiration[]> {
+type InspirationRow = {
+  id: number;
+  title: string;
+  domain: string;
+  image_url: string;
+  style?: string | null;
+  description?: string | null;
+  features?: string | null;
+};
+
+async function selectInspirationsFromDatabase(
+  db: D1Database,
+  profile: StructuredProfile
+): Promise<Inspiration[]> {
   try {
     // Analyze profile to determine best matching inspirations
-    const isPersonal = profile.siteName?.toLowerCase().includes('portfolio') || 
+    const isPersonal = profile.siteName?.toLowerCase().includes('portfolio') ||
                       profile.tone?.includes('personal') ||
                       profile.primaryGoal?.toLowerCase().includes('portfolio');
     
@@ -441,7 +648,7 @@ async function selectInspirationsFromDatabase(db: any, profile: any): Promise<In
     
     // Build query based on analysis
     let sql = `SELECT * FROM inspirations WHERE is_active = TRUE AND category = ?`;
-    const params: any[] = [category];
+    const params: string[] = [category];
     
     if (industry) {
       sql += ` AND industry = ?`;
@@ -455,24 +662,26 @@ async function selectInspirationsFromDatabase(db: any, profile: any): Promise<In
     
     sql += ` ORDER BY RANDOM() LIMIT 5`;
     
-    const result = await db.prepare(sql).bind(...params).all();
-    
-    // If we don't have enough specific matches, get some general ones
-    if (result.results.length < 3) {
+    const result = await db.prepare<InspirationRow>(sql).bind(...params).all();
+    let rows = result.results ?? [];
+
+    if (rows.length < 3) {
       const generalSql = `SELECT * FROM inspirations WHERE is_active = TRUE AND category = ? ORDER BY RANDOM() LIMIT 5`;
-      const generalResult = await db.prepare(generalSql).bind(category).all();
-      result.results = generalResult.results;
+      const generalResult = await db
+        .prepare<InspirationRow>(generalSql)
+        .bind(category)
+        .all();
+      rows = generalResult.results ?? rows;
     }
-    
-    // Transform database results to Inspiration format
-    const inspirations: Inspiration[] = result.results.map((row: any) => ({
+
+    const inspirations: Inspiration[] = rows.map((row) => ({
       id: `db_${row.id}`,
       title: row.title,
       domain: row.domain,
       image: row.image_url,
       justification: generateJustification(row, profile)
     }));
-    
+
     return inspirations;
   } catch (error) {
     console.error('Error selecting inspirations from database:', error);
@@ -480,7 +689,10 @@ async function selectInspirationsFromDatabase(db: any, profile: any): Promise<In
   }
 }
 
-function generateJustification(inspiration: any, profile: any): string {
+function generateJustification(
+  inspiration: InspirationRow,
+  profile: StructuredProfile
+): string {
   const lang = profile.lang || 'fr';
   
   if (lang === 'fr') {

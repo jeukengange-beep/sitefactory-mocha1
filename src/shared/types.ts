@@ -51,10 +51,10 @@ export const ProjectSchema = z.object({
   id: z.number(),
   slug: z.string(),
   siteType: SiteTypeSchema,
-  deepAnswers: z.string().optional(),
-  structuredProfile: StructuredProfileSchema.optional(),
-  selectedInspirations: z.array(InspirationSchema).optional(),
-  generatedImages: z.array(GeneratedImageSchema).optional(),
+  deepAnswers: z.string().nullable(),
+  structuredProfile: StructuredProfileSchema.nullable(),
+  selectedInspirations: z.array(InspirationSchema).nullable(),
+  generatedImages: z.array(GeneratedImageSchema).nullable(),
   language: LanguageSchema,
   status: z.enum(["draft", "completed"]),
   createdAt: z.string(),
@@ -71,7 +71,9 @@ export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
 
 export const UpdateProjectRequestSchema = z.object({
   deepAnswers: z.string().optional(),
+  structuredProfile: StructuredProfileSchema.optional(),
   selectedInspirations: z.array(InspirationSchema).optional(),
+  generatedImages: z.array(GeneratedImageSchema).optional(),
   status: z.enum(["draft", "completed"]).optional(),
 });
 export type UpdateProjectRequest = z.infer<typeof UpdateProjectRequestSchema>;
