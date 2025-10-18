@@ -12,6 +12,7 @@ export default function Step1() {
   const navigate = useNavigate();
   const [selectedType, setSelectedType] = useState<SiteType | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const siteTypes = [
     {
@@ -36,6 +37,7 @@ export default function Step1() {
     if (!selectedType) return;
 
     setIsLoading(true);
+    setError(null);
     try {
       const response = await fetch('/api/projects', {
         method: 'POST',
@@ -49,22 +51,14 @@ export default function Step1() {
       if (!response.ok) throw new Error('Failed to create project');
 
       const project = await response.json();
-      
-      // Save to localStorage for offline access
-      localStorage.setItem('currentProject', JSON.stringify(project));
-      
       navigate(`/new/step2/${project.id}`);
     } catch (error) {
       console.error('Error creating project:', error);
-      // For now, create a temporary ID and continue
-      const tempProject = {
-        id: Date.now(),
-        siteType: selectedType,
-        language: i18n.language,
-        status: 'draft'
-      };
-      localStorage.setItem('currentProject', JSON.stringify(tempProject));
-      navigate(`/new/step2/${tempProject.id}`);
+      setError(
+        t('step1.error', {
+          defaultValue: 'Nous n\'avons pas pu créer votre projet. Veuillez réessayer.'
+        })
+      );
     } finally {
       setIsLoading(false);
     }
@@ -110,6 +104,11 @@ export default function Step1() {
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
             {t('step1.subtitle')}
           </p>
+          {error && (
+            <p className="mt-4 text-sm text-red-500">
+              {error}
+            </p>
+          )}
         </motion.div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">

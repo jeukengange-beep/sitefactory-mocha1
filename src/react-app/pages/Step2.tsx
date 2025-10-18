@@ -12,8 +12,11 @@ export default function Step2() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { projectId } = useParams();
+  const [project, setProject] = useState<Project | null>(null);
   const [deepAnswers, setDeepAnswers] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isFetching, setIsFetching] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // Load saved answers from localStorage
@@ -37,9 +40,10 @@ export default function Step2() {
   };
 
   const handleContinue = async () => {
-    if (deepAnswers.length < 50) return;
+    if (!project || deepAnswers.length < 50) return;
 
     setIsLoading(true);
+    setError(null);
     try {
       const savedProject = localStorage.getItem('currentProject');
       if (!savedProject) {
@@ -64,8 +68,6 @@ export default function Step2() {
       let structuredProfile: StructuredProfile | undefined;
 
       try {
-        // Try to analyze the answers with OpenAI
-        console.log('Starting analysis...');
         const analyzeResponse = await fetch('/api/analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -83,6 +85,8 @@ export default function Step2() {
         } else {
           console.log('Analysis failed, continuing without structured profile');
         }
+
+        profile = await analyzeResponse.json();
       } catch (analysisError) {
         console.error('Analysis error:', analysisError);
       }
@@ -132,7 +136,7 @@ export default function Step2() {
     }
   };
 
-  const isValid = deepAnswers.length >= 50;
+  const isValid = deepAnswers.length >= 50 && !isFetching;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 relative overflow-hidden">
@@ -174,6 +178,11 @@ export default function Step2() {
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
             {t('step2.subtitle')}
           </p>
+          {error && (
+            <p className="mt-4 text-sm text-red-500">
+              {error}
+            </p>
+          )}
         </motion.div>
 
         <motion.div
@@ -188,8 +197,9 @@ export default function Step2() {
             placeholder={t('step2.placeholder')}
             className="w-full h-80 resize-none border-none outline-none bg-transparent text-gray-900 placeholder-gray-500 text-lg leading-relaxed"
             style={{ minHeight: '320px' }}
+            disabled={isFetching}
           />
-          
+
           <div className="flex justify-between items-center mt-4 pt-4 border-t border-gray-200">
             <span className={`text-sm ${
               deepAnswers.length >= 50 ? 'text-green-600' : 'text-gray-500'

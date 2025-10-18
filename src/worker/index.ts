@@ -2,14 +2,82 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { nanoid } from "nanoid";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { 
-  CreateProjectRequestSchema, 
+import {
+  CreateProjectRequestSchema,
   UpdateProjectRequestSchema,
   AnalyzeRequestSchema,
   InspirationsRequestSchema,
   GenerateImagesRequestSchema,
-  type Inspiration
+  type Inspiration,
+  type Project,
+  type GeneratedImage,
+  type StructuredProfile,
+  type Section
 } from "@/shared/types";
+
+type D1Meta = {
+  duration?: number;
+  changes?: number;
+  last_row_id: number;
+};
+
+type D1Result<T = unknown> = {
+  success: boolean;
+  results?: T[];
+  meta: D1Meta;
+};
+
+type D1PreparedStatement<T = unknown> = {
+  bind(...values: (string | number | null)[]): D1PreparedStatement<T>;
+  first<R = T>(): Promise<R | null>;
+  run(): Promise<D1Result<T>>;
+  all<R = T>(): Promise<D1Result<R>>;
+};
+
+type D1Database = {
+  prepare<T = unknown>(query: string): D1PreparedStatement<T>;
+};
+
+type Env = {
+  DB: D1Database;
+  GOOGLE_AI_API_KEY: string;
+};
+
+type DbProjectRow = {
+  id: number;
+  slug: string;
+  site_type: string;
+  deep_answers: string | null;
+  structured_profile: string | null;
+  selected_inspirations: string | null;
+  generated_images: string | null;
+  language: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+const mapProjectFromRow = (row: DbProjectRow): Project => {
+  return {
+    id: Number(row.id),
+    slug: row.slug,
+    siteType: row.site_type as Project["siteType"],
+    deepAnswers: row.deep_answers ?? null,
+    structuredProfile: row.structured_profile
+      ? JSON.parse(row.structured_profile)
+      : null,
+    selectedInspirations: row.selected_inspirations
+      ? JSON.parse(row.selected_inspirations)
+      : null,
+    generatedImages: row.generated_images
+      ? JSON.parse(row.generated_images)
+      : null,
+    language: row.language as Project["language"],
+    status: row.status as Project["status"],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+};
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -26,8 +94,19 @@ app.post("/api/projects", async (c) => {
     
     // Insert into database
     const insertSql = `
-      INSERT INTO projects (slug, site_type, language, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO projects (
+        slug,
+        site_type,
+        language,
+        status,
+        created_at,
+        updated_at,
+        deep_answers,
+        structured_profile,
+        selected_inspirations,
+        generated_images
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const insertResult = await c.env.DB.prepare(insertSql)
@@ -62,11 +141,11 @@ app.patch("/api/projects/:id", async (c) => {
     const now = new Date().toISOString();
     
     let updateSql = "UPDATE projects SET updated_at = ?";
-    const params: any[] = [now];
-    
+    const params: (string | null)[] = [now];
+
     if (data.deepAnswers !== undefined) {
       updateSql += ", deep_answers = ?";
-      params.push(data.deepAnswers);
+      params.push(data.deepAnswers ?? null);
     }
     
     if (data.structuredProfile !== undefined) {
@@ -79,7 +158,9 @@ app.patch("/api/projects/:id", async (c) => {
 
     if (data.selectedInspirations !== undefined) {
       updateSql += ", selected_inspirations = ?";
-      params.push(JSON.stringify(data.selectedInspirations));
+      params.push(
+        data.selectedInspirations ? JSON.stringify(data.selectedInspirations) : null
+      );
     }
 
     if (data.generatedImages !== undefined) {
@@ -91,13 +172,23 @@ app.patch("/api/projects/:id", async (c) => {
       updateSql += ", status = ?";
       params.push(data.status);
     }
-    
+
     updateSql += " WHERE id = ?";
     params.push(projectId);
-    
+
     await c.env.DB.prepare(updateSql).bind(...params).run();
-    
-    return c.json({ success: true });
+
+    const updatedRow = await c.env.DB.prepare(
+      "SELECT * FROM projects WHERE id = ?"
+    )
+      .bind(projectId)
+      .first<DbProjectRow>();
+
+    if (!updatedRow) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    return c.json(mapProjectFromRow(updatedRow));
   } catch (error) {
     console.error('Error updating project:', error);
     return c.json({ error: 'Failed to update project' }, 500);
@@ -107,7 +198,7 @@ app.patch("/api/projects/:id", async (c) => {
 app.get("/api/projects/:slug", async (c) => {
   try {
     const slug = c.req.param("slug");
-    
+
     const result = await c.env.DB.prepare(
       "SELECT * FROM projects WHERE slug = ?"
     ).bind(slug).first();
@@ -138,13 +229,32 @@ app.get("/api/projects/:slug", async (c) => {
   }
 });
 
+app.get("/api/projects/by-id/:id", async (c) => {
+  try {
+    const projectId = c.req.param("id");
+
+    const result = await c.env.DB.prepare(
+      "SELECT * FROM projects WHERE id = ?"
+    ).bind(projectId).first<DbProjectRow>();
+
+    if (!result) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    return c.json(mapProjectFromRow(result));
+  } catch (error) {
+    console.error('Error fetching project by id:', error);
+    return c.json({ error: 'Failed to fetch project' }, 500);
+  }
+});
+
 // Analysis endpoint
 app.post("/api/analyze", async (c) => {
   try {
     const body = await c.req.json();
     const data = AnalyzeRequestSchema.parse(body);
     
-    const genAI = new GoogleGenerativeAI((c.env as any).GOOGLE_AI_API_KEY);
+    const genAI = new GoogleGenerativeAI(c.env.GOOGLE_AI_API_KEY);
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     
     const prompt = `
@@ -218,7 +328,7 @@ app.post("/api/inspirations", async (c) => {
     }
     
     // If we don't have enough from database, supplement with AI-generated ones
-    const genAI = new GoogleGenerativeAI((c.env as any).GOOGLE_AI_API_KEY);
+    const genAI = new GoogleGenerativeAI(c.env.GOOGLE_AI_API_KEY);
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     
     const isPersonal = profile.siteName?.toLowerCase().includes('portfolio') || profile.tone?.includes('personal');
@@ -280,7 +390,7 @@ app.post("/api/generate", async (c) => {
     const data = GenerateImagesRequestSchema.parse(body);
 
     // Generate sophisticated contextual images based on profile analysis
-    const generatedImages: any[] = [];
+    const generatedImages: GeneratedImage[] = [];
     
     const profile = data.structuredProfile;
     const isPersonal = profile.siteName?.toLowerCase().includes('portfolio') || 
@@ -301,7 +411,7 @@ app.post("/api/generate", async (c) => {
 
       // Generate section images
       if (profile.sections && profile.sections.length > 0) {
-        profile.sections.slice(0, 4).forEach((section: any, index: number) => {
+        profile.sections.slice(0, 4).forEach((section: Section, index: number) => {
           generatedImages.push({
             id: section.id,
             type: 'section',
@@ -325,7 +435,7 @@ app.post("/api/generate", async (c) => {
       });
 
       if (profile.sections) {
-        profile.sections.slice(0, 4).forEach((section: any, index: number) => {
+        profile.sections.slice(0, 4).forEach((section: Section, index: number) => {
           generatedImages.push({
             id: section.id,
             type: 'section',
@@ -345,8 +455,13 @@ app.post("/api/generate", async (c) => {
 });
 
 // Smart contextual image selection based on profile analysis
-async function selectContextualImages(profile: any, isPersonal: boolean) {
-  const imageCollections = {
+type ContextualCollections = Record<string, string[]>;
+
+async function selectContextualImages(
+  profile: StructuredProfile,
+  isPersonal: boolean
+): Promise<{ overview: string; sections: string[] }> {
+  const imageCollections: Record<'personal' | 'business', ContextualCollections> = {
     personal: {
       creative: [
         'https://images.unsplash.com/photo-1558655146-d09347e92766?w=800&h=600&fit=crop&auto=format&q=80',
@@ -395,16 +510,21 @@ async function selectContextualImages(profile: any, isPersonal: boolean) {
     }
   };
 
-  // Analyze style from profile
-  const tone = profile.tone?.toLowerCase() || '';
+  const tone = profile.tone?.toLowerCase() ?? '';
   let style = 'modern';
-  
-  if (tone.includes('minimal') || tone.includes('épuré')) style = 'minimal';
-  else if (tone.includes('creative') || tone.includes('créatif')) style = 'creative';
-  else if (tone.includes('corporate') || tone.includes('professionnel')) style = 'corporate';
 
-  const category = isPersonal ? 'personal' : 'business';
-  const selectedCollection = (imageCollections as any)[category][style] || (imageCollections as any)[category].modern;
+  if (tone.includes('minimal') || tone.includes('épuré')) {
+    style = 'minimal';
+  } else if (tone.includes('creative') || tone.includes('créatif')) {
+    style = 'creative';
+  } else if (tone.includes('corporate') || tone.includes('professionnel')) {
+    style = 'corporate';
+  }
+
+  const category: 'personal' | 'business' = isPersonal ? 'personal' : 'business';
+  const categoryCollections = imageCollections[category];
+  const selectedCollection =
+    categoryCollections[style] ?? categoryCollections.modern;
 
   return {
     overview: selectedCollection[0],
@@ -413,10 +533,23 @@ async function selectContextualImages(profile: any, isPersonal: boolean) {
 }
 
 // Helper function to select inspirations from database
-async function selectInspirationsFromDatabase(db: any, profile: any): Promise<Inspiration[]> {
+type InspirationRow = {
+  id: number;
+  title: string;
+  domain: string;
+  image_url: string;
+  style?: string | null;
+  description?: string | null;
+  features?: string | null;
+};
+
+async function selectInspirationsFromDatabase(
+  db: D1Database,
+  profile: StructuredProfile
+): Promise<Inspiration[]> {
   try {
     // Analyze profile to determine best matching inspirations
-    const isPersonal = profile.siteName?.toLowerCase().includes('portfolio') || 
+    const isPersonal = profile.siteName?.toLowerCase().includes('portfolio') ||
                       profile.tone?.includes('personal') ||
                       profile.primaryGoal?.toLowerCase().includes('portfolio');
     
@@ -463,7 +596,7 @@ async function selectInspirationsFromDatabase(db: any, profile: any): Promise<In
     
     // Build query based on analysis
     let sql = `SELECT * FROM inspirations WHERE is_active = TRUE AND category = ?`;
-    const params: any[] = [category];
+    const params: string[] = [category];
     
     if (industry) {
       sql += ` AND industry = ?`;
@@ -477,24 +610,26 @@ async function selectInspirationsFromDatabase(db: any, profile: any): Promise<In
     
     sql += ` ORDER BY RANDOM() LIMIT 5`;
     
-    const result = await db.prepare(sql).bind(...params).all();
-    
-    // If we don't have enough specific matches, get some general ones
-    if (result.results.length < 3) {
+    const result = await db.prepare<InspirationRow>(sql).bind(...params).all();
+    let rows = result.results ?? [];
+
+    if (rows.length < 3) {
       const generalSql = `SELECT * FROM inspirations WHERE is_active = TRUE AND category = ? ORDER BY RANDOM() LIMIT 5`;
-      const generalResult = await db.prepare(generalSql).bind(category).all();
-      result.results = generalResult.results;
+      const generalResult = await db
+        .prepare<InspirationRow>(generalSql)
+        .bind(category)
+        .all();
+      rows = generalResult.results ?? rows;
     }
-    
-    // Transform database results to Inspiration format
-    const inspirations: Inspiration[] = result.results.map((row: any) => ({
+
+    const inspirations: Inspiration[] = rows.map((row) => ({
       id: `db_${row.id}`,
       title: row.title,
       domain: row.domain,
       image: row.image_url,
       justification: generateJustification(row, profile)
     }));
-    
+
     return inspirations;
   } catch (error) {
     console.error('Error selecting inspirations from database:', error);
@@ -502,7 +637,10 @@ async function selectInspirationsFromDatabase(db: any, profile: any): Promise<In
   }
 }
 
-function generateJustification(inspiration: any, profile: any): string {
+function generateJustification(
+  inspiration: InspirationRow,
+  profile: StructuredProfile
+): string {
   const lang = profile.lang || 'fr';
   
   if (lang === 'fr') {
