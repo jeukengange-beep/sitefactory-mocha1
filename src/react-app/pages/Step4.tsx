@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'framer-motion';
 import { Download, Share2, MessageCircle, ArrowLeft, Eye } from 'lucide-react';
-import { GeneratedImage } from '@/shared/types';
+import { GeneratedImage, Project } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
 
@@ -14,119 +14,133 @@ export default function Step4() {
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [projectSlug, setProjectSlug] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+
+  const persistGeneratedImages = useCallback(async (images: GeneratedImage[]) => {
+    if (!projectId) return;
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          generatedImages: images,
+          status: 'completed'
+        })
+      });
+
+      if (response.ok) {
+        const updatedProject: Project = await response.json();
+        setProjectSlug(updatedProject.slug);
+      }
+    } catch (persistError) {
+      console.error('Error saving generated images:', persistError);
+    }
+  }, [projectId]);
+
+  const generateImagesForProject = useCallback(async (currentProject: Project) => {
+    try {
+      const generateResponse = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          structuredProfile: currentProject.structuredProfile,
+          selectedInspirations: currentProject.selectedInspirations ?? []
+        })
+      });
+
+      if (!generateResponse.ok) {
+        throw new Error('Image generation failed');
+      }
+
+      const aiGeneratedImages: GeneratedImage[] = await generateResponse.json();
+      setGeneratedImages(aiGeneratedImages);
+      await persistGeneratedImages(aiGeneratedImages);
+    } catch (error) {
+      console.error('Error generating AI images, using fallback:', error);
+
+      const profile = currentProject.structuredProfile;
+      const fallbackImages: GeneratedImage[] = [
+        {
+          id: 'overview',
+          type: 'overview',
+          url: 'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=800&h=600&fit=crop',
+          filename: 'site-overview.png'
+        }
+      ];
+
+      if (profile?.sections) {
+        const contextualImages = [
+          'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=800&h=400&fit=crop',
+          'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=800&h=400&fit=crop',
+          'https://images.unsplash.com/photo-1586717791821-3f44a563fa4c?w=800&h=400&fit=crop',
+          'https://images.unsplash.com/photo-1574169208507-84376144848b?w=800&h=400&fit=crop',
+          'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=800&h=400&fit=crop'
+        ];
+
+        profile.sections.forEach((section, index) => {
+          fallbackImages.push({
+            id: section.id,
+            type: 'section',
+            sectionId: section.id,
+            url: contextualImages[index % contextualImages.length],
+            filename: `${section.id}-section.png`
+          });
+        });
+      }
+
+      setGeneratedImages(fallbackImages);
+      await persistGeneratedImages(fallbackImages);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [persistGeneratedImages]);
 
   useEffect(() => {
-    generateImages();
-  }, []);
-
-  const generateImages = async () => {
-    setIsLoading(true);
-    try {
-      const savedProject = localStorage.getItem('currentProject');
-      if (!savedProject) {
+    const loadProject = async () => {
+      if (!projectId) {
         navigate('/new/step1');
         return;
       }
 
-      const project = JSON.parse(savedProject);
-      
-      if (!project.structuredProfile) {
-        navigate('/new/step2');
-        return;
-      }
+      setIsLoading(true);
+      setError(null);
 
-      // Generate real AI images based on structured profile and inspirations
       try {
-        const generateResponse = await fetch('/api/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            structuredProfile: project.structuredProfile,
-            selectedInspirations: project.selectedInspirations || []
+        const response = await fetch(`/api/projects/by-id/${projectId}`);
+        if (!response.ok) {
+          throw new Error('Failed to load project');
+        }
+
+        const projectData: Project = await response.json();
+
+        if (!projectData.structuredProfile) {
+          navigate(`/new/step2/${projectId}`);
+          return;
+        }
+
+        setProjectSlug(projectData.slug);
+
+        if (projectData.generatedImages && projectData.generatedImages.length > 0) {
+          setGeneratedImages(projectData.generatedImages);
+          setIsLoading(false);
+          return;
+        }
+
+        await generateImagesForProject(projectData);
+      } catch (err) {
+        console.error('Error loading project:', err);
+        setError(
+          t('step4.loadError', {
+            defaultValue: 'Impossible de charger votre projet. Veuillez réessayer.'
           })
-        });
-
-        if (generateResponse.ok) {
-          const aiGeneratedImages = await generateResponse.json();
-          setGeneratedImages(aiGeneratedImages);
-          
-          // Generate slug and save final project
-          const slug = `project-${Date.now()}`;
-          setProjectSlug(slug);
-          
-          project.generatedImages = aiGeneratedImages;
-          project.slug = slug;
-          project.status = 'completed';
-          localStorage.setItem('currentProject', JSON.stringify(project));
-          
-          // Try to save to backend
-          try {
-            await fetch(`/api/projects/${projectId}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                generatedImages: JSON.stringify(aiGeneratedImages),
-                status: 'completed'
-              })
-            });
-          } catch (error) {
-            console.log('Backend save failed, continuing with localStorage');
-          }
-        } else {
-          throw new Error('Image generation failed');
-        }
-      } catch (error) {
-        console.error('Error generating AI images, using fallback:', error);
-        
-        // Fallback to curated images based on profile
-        const profile = project.structuredProfile;
-        const fallbackImages: GeneratedImage[] = [
-          {
-            id: 'overview',
-            type: 'overview',
-            url: 'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=800&h=600&fit=crop',
-            filename: 'site-overview.png'
-          }
-        ];
-
-        // Add section images based on structured profile
-        if (profile.sections) {
-          const contextualImages = [
-            'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=800&h=400&fit=crop',
-            'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=800&h=400&fit=crop',
-            'https://images.unsplash.com/photo-1586717791821-3f44a563fa4c?w=800&h=400&fit=crop',
-            'https://images.unsplash.com/photo-1574169208507-84376144848b?w=800&h=400&fit=crop',
-            'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=800&h=400&fit=crop'
-          ];
-          
-          profile.sections.forEach((section: any, index: number) => {
-            fallbackImages.push({
-              id: section.id,
-              type: 'section',
-              sectionId: section.id,
-              url: contextualImages[index % contextualImages.length],
-              filename: `${section.id}-section.png`
-            });
-          });
-        }
-
-        setGeneratedImages(fallbackImages);
-        
-        // Generate slug and save final project
-        const slug = `project-${Date.now()}`;
-        setProjectSlug(slug);
-        
-        project.generatedImages = fallbackImages;
-        project.slug = slug;
-        project.status = 'completed';
-        localStorage.setItem('currentProject', JSON.stringify(project));
+        );
+        setIsLoading(false);
       }
-    } catch (error) {
-      console.error('Error in image generation process:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    };
+
+    loadProject();
+  }, [generateImagesForProject, navigate, projectId, t]);
 
   const handleBack = () => {
     navigate(`/new/step3/${projectId}`);
@@ -148,12 +162,13 @@ export default function Step4() {
   };
 
   const handleShare = () => {
+    if (!projectSlug) return;
     const shareUrl = `${window.location.origin}/preview/${projectSlug}`;
     navigator.clipboard.writeText(shareUrl);
-    // Could add a toast notification here
   };
 
   const handleWhatsApp = () => {
+    if (!projectSlug) return;
     const message = encodeURIComponent(
       `Bonjour ! J'ai utilisé Site-Factory pour générer l'aperçu de mon site web. Voici le lien : ${window.location.origin}/preview/${projectSlug}\n\nJe souhaite discuter de la réalisation complète pour 35 000 FCFA.`
     );
@@ -196,7 +211,7 @@ export default function Step4() {
         >
           Site-Factory
         </motion.h1>
-        
+
         <motion.div
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
@@ -219,129 +234,117 @@ export default function Step4() {
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
             {t('step4.subtitle')}
           </p>
+          {error && (
+            <p className="mt-4 text-sm text-red-500">
+              {error}
+            </p>
+          )}
         </motion.div>
 
-        {/* Overview Image */}
         {overviewImage && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="mb-12"
+            transition={{ delay: 0.1 }}
+            className="bg-white/80 backdrop-blur-sm rounded-3xl border border-white/60 shadow-xl overflow-hidden mb-10"
           >
-            <h3 className="text-2xl font-bold text-gray-900 mb-6">{t('step4.overview')}</h3>
-            <div className="bg-white rounded-3xl p-6 shadow-lg border border-white/50">
-              <div className="relative group">
-                <img
-                  src={overviewImage.url}
-                  alt="Site Overview"
-                  className="w-full rounded-2xl shadow-lg"
-                />
-                <motion.button
+            <div className="aspect-[16/9] bg-black/5 relative">
+              <img src={overviewImage.url} alt="Aperçu principal" className="w-full h-full object-cover" />
+              <div className="absolute top-4 right-4 flex gap-3">
+                <button
                   onClick={() => handleDownload(overviewImage)}
-                  className="absolute top-4 right-4 bg-black/70 backdrop-blur-sm text-white p-3 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity"
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.9 }}
+                  className="px-4 py-2 rounded-full bg-white/80 backdrop-blur flex items-center gap-2 text-gray-700 font-medium hover:bg-white"
                 >
-                  <Download className="w-5 h-5" />
-                </motion.button>
+                  <Download className="w-4 h-4" />
+                  {t('step4.download')}
+                </button>
+                <button
+                  onClick={() => window.open(overviewImage.url, '_blank')}
+                  className="px-4 py-2 rounded-full bg-white/80 backdrop-blur flex items-center gap-2 text-gray-700 font-medium hover:bg-white"
+                >
+                  <Eye className="w-4 h-4" />
+                  {t('step4.preview')}
+                </button>
               </div>
             </div>
           </motion.div>
         )}
 
-        {/* Section Images */}
         {sectionImages.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4 }}
-            className="mb-12"
-          >
-            <h3 className="text-2xl font-bold text-gray-900 mb-6">{t('step4.sections')}</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {sectionImages.map((image, index) => (
-                <motion.div
-                  key={image.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.5 + index * 0.1 }}
-                  className="bg-white rounded-2xl p-4 shadow-lg border border-white/50"
-                >
-                  <div className="relative group">
-                    <img
-                      src={image.url}
-                      alt={`Section ${image.sectionId}`}
-                      className="w-full rounded-xl shadow-md"
-                    />
-                    <motion.button
-                      onClick={() => handleDownload(image)}
-                      className="absolute top-3 right-3 bg-black/70 backdrop-blur-sm text-white p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
-                      whileHover={{ scale: 1.1 }}
-                      whileTap={{ scale: 0.9 }}
-                    >
-                      <Download className="w-4 h-4" />
-                    </motion.button>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+            {sectionImages.map(image => (
+              <motion.div
+                key={image.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1 }}
+                className="bg-white/80 backdrop-blur-sm rounded-3xl border border-white/60 shadow-lg overflow-hidden"
+              >
+                <div className="aspect-[4/3]">
+                  <img src={image.url} alt={image.sectionId} className="w-full h-full object-cover" />
+                </div>
+                <div className="p-6 flex justify-between items-center">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900 capitalize">
+                      {image.sectionId}
+                    </h3>
+                    <p className="text-sm text-gray-500">{t('step4.sectionPreview')}</p>
                   </div>
-                  <p className="text-sm font-medium text-gray-700 mt-3 capitalize">
-                    Section {image.sectionId}
-                  </p>
-                </motion.div>
-              ))}
-            </div>
-          </motion.div>
+                  <button
+                    onClick={() => handleDownload(image)}
+                    className="px-4 py-2 rounded-full bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 flex items-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    {t('step4.download')}
+                  </button>
+                </div>
+              </motion.div>
+            ))}
+          </div>
         )}
 
-        {/* Action Buttons */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.8 }}
-          className="bg-white/70 backdrop-blur-sm rounded-3xl p-8 border border-white/50 shadow-lg"
+          transition={{ delay: 0.2 }}
+          className="bg-white/80 backdrop-blur-sm rounded-3xl border border-white/60 shadow-xl p-8 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6"
         >
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <motion.button
+          <div>
+            <h3 className="text-2xl font-bold text-gray-900 mb-2">{t('step4.shareTitle')}</h3>
+            <p className="text-gray-600">{t('step4.shareSubtitle')}</p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
               onClick={handleDownloadAll}
-              className="flex items-center justify-center gap-3 px-6 py-4 bg-gray-100 hover:bg-gray-200 rounded-2xl transition-colors"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
+              className="px-5 py-3 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold flex items-center gap-2 shadow-lg shadow-blue-500/20 hover:shadow-xl hover:shadow-blue-500/30"
             >
-              <Download className="w-5 h-5 text-gray-700" />
-              <span className="font-medium text-gray-700">{t('step4.downloadAll')}</span>
-            </motion.button>
-
-            <motion.button
+              <Download className="w-5 h-5" />
+              {t('step4.downloadAll')}
+            </button>
+            <button
               onClick={handleShare}
-              className="flex items-center justify-center gap-3 px-6 py-4 bg-blue-100 hover:bg-blue-200 rounded-2xl transition-colors"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
+              className="px-5 py-3 rounded-2xl bg-white text-gray-700 font-semibold flex items-center gap-2 border border-gray-200 hover:border-gray-300"
+              disabled={!projectSlug}
             >
-              <Share2 className="w-5 h-5 text-blue-700" />
-              <span className="font-medium text-blue-700">{t('step4.shareLink')}</span>
-            </motion.button>
-
-            <motion.button
+              <Share2 className="w-5 h-5" />
+              {t('step4.copyLink')}
+            </button>
+            <button
               onClick={handleWhatsApp}
-              className="flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-2xl shadow-lg hover:shadow-xl transition-all"
-              whileHover={{ scale: 1.02, y: -2 }}
-              whileTap={{ scale: 0.98 }}
+              className="px-5 py-3 rounded-2xl bg-green-50 text-green-600 font-semibold flex items-center gap-2 border border-green-100 hover:border-green-200"
+              disabled={!projectSlug}
             >
               <MessageCircle className="w-5 h-5" />
-              <span className="font-medium">{t('step4.whatsappCTA')}</span>
-            </motion.button>
-          </div>
-
-          <div className="text-center mt-6 pt-6 border-t border-gray-200">
-            <p className="text-sm text-gray-600 mb-2">{t('step4.priceDescription')}</p>
-            <p className="text-2xl font-bold text-gray-900">{t('step4.price')}</p>
+              {t('step4.whatsapp')}
+            </button>
           </div>
         </motion.div>
 
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ delay: 1 }}
-          className="flex justify-between items-center mt-8"
+          transition={{ delay: 0.3 }}
+          className="mt-10 flex justify-between items-center"
         >
           <motion.button
             onClick={handleBack}
@@ -353,17 +356,12 @@ export default function Step4() {
             {t('common.back')}
           </motion.button>
 
-          <motion.button
-            onClick={() => navigate(`/preview/${projectSlug}`)}
-            className="flex items-center gap-3 px-8 py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/30 transition-all"
-            whileHover={{ scale: 1.05, y: -2 }}
-            whileTap={{ scale: 0.95 }}
-          >
-            <Eye className="w-5 h-5" />
-            Voir la galerie
-          </motion.button>
+          <div className="text-right">
+            <p className="text-sm text-gray-500">{t('step4.footerNote')}</p>
+          </div>
         </motion.div>
       </div>
     </div>
   );
 }
+
