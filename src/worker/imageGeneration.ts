@@ -92,11 +92,11 @@ export class GoogleImageGeneration implements ImageGenerationService {
         ? imageCollections.business.corporate 
         : imageCollections.business.professional;
     } else if (industry === 'ecommerce' || industry === 'retail') {
-      selectedCollection = (imageCollections.ecommerce as any)[styleCategory] || imageCollections.ecommerce.modern;
+      selectedCollection = imageCollections.ecommerce[styleCategory] || imageCollections.ecommerce.modern;
     } else if (industry === 'food' || industry === 'restaurant') {
-      selectedCollection = (imageCollections.food as any)[styleCategory] || imageCollections.food.fresh;
+      selectedCollection = imageCollections.food[styleCategory] || imageCollections.food.fresh;
     } else if (industry === 'health' || industry === 'wellness') {
-      selectedCollection = (imageCollections.wellness as any)[styleCategory] || imageCollections.wellness.calming;
+      selectedCollection = imageCollections.wellness[styleCategory] || imageCollections.wellness.calming;
     }
 
     // Apply color tone filtering

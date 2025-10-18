@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'framer-motion';
 import { ArrowRight, ArrowLeft } from 'lucide-react';
+import { Project, StructuredProfile } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
 
@@ -10,47 +11,59 @@ export default function Step2() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { projectId } = useParams();
+  const [project, setProject] = useState<Project | null>(null);
   const [deepAnswers, setDeepAnswers] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isFetching, setIsFetching] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Load saved answers from localStorage
-    const savedProject = localStorage.getItem('currentProject');
-    if (savedProject) {
-      const project = JSON.parse(savedProject);
-      if (project.deepAnswers) {
-        setDeepAnswers(project.deepAnswers);
+    const loadProject = async () => {
+      if (!projectId) {
+        navigate('/new/step1');
+        return;
       }
-    }
-  }, []);
+
+      setIsFetching(true);
+      setError(null);
+
+      try {
+        const response = await fetch(`/api/projects/by-id/${projectId}`);
+        if (!response.ok) {
+          throw new Error('Failed to fetch project');
+        }
+
+        const projectData: Project = await response.json();
+        setProject(projectData);
+        setDeepAnswers(projectData.deepAnswers ?? '');
+      } catch (err) {
+        console.error('Error loading project:', err);
+        setError(
+          t('step2.loadError', {
+            defaultValue: 'Impossible de charger votre projet. Veuillez revenir à l\'étape 1.'
+          })
+        );
+      } finally {
+        setIsFetching(false);
+      }
+    };
+
+    loadProject();
+  }, [navigate, projectId, t]);
 
   const handleBack = () => {
     navigate('/new/step1');
   };
 
   const handleContinue = async () => {
-    if (deepAnswers.length < 50) return;
+    if (!project || deepAnswers.length < 50) return;
 
     setIsLoading(true);
+    setError(null);
     try {
-      const savedProject = localStorage.getItem('currentProject');
-      if (!savedProject) {
-        console.log('No saved project found, redirecting to step 1');
-        navigate('/new/step1');
-        return;
-      }
-
-      const project = JSON.parse(savedProject);
-      console.log('Current project:', project);
-      console.log('Project ID from params:', projectId);
-      
-      // Save answers immediately to localStorage
-      project.deepAnswers = deepAnswers;
-      localStorage.setItem('currentProject', JSON.stringify(project));
+      let profile: StructuredProfile;
 
       try {
-        // Try to analyze the answers with OpenAI
-        console.log('Starting analysis...');
         const analyzeResponse = await fetch('/api/analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -61,50 +74,14 @@ export default function Step2() {
           })
         });
 
-        if (analyzeResponse.ok) {
-          console.log('Analysis successful');
-          const structuredProfile = await analyzeResponse.json();
-          console.log('Structured profile:', structuredProfile);
-          
-          // Save structured profile to project
-          project.structuredProfile = structuredProfile;
-          localStorage.setItem('currentProject', JSON.stringify(project));
-
-          // Try to save to backend
-          try {
-            await fetch(`/api/projects/${projectId}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                deepAnswers,
-                structuredProfile: JSON.stringify(structuredProfile)
-              })
-            });
-            console.log('Backend save successful');
-          } catch (backendError) {
-            console.log('Backend save failed, continuing with localStorage:', backendError);
-          }
-        } else {
-          console.log('Analysis failed, continuing without structured profile');
-          // Create a basic structured profile as fallback
-          project.structuredProfile = {
-            siteName: project.siteType === 'personal' ? 'Mon Portfolio' : 'Mon Entreprise',
-            tagline: 'Site web professionnel',
-            description: deepAnswers.slice(0, 200),
-            tone: 'moderne',
-            ambience: 'professionnel et élégant',
-            primaryGoal: 'Présenter mon activité',
-            keyHighlights: ['Qualité', 'Professionnalisme', 'Innovation'],
-            recommendedCTA: 'Nous contacter',
-            colors: ['#3B82F6', '#8B5CF6', '#EF4444'],
-            lang: project.language || 'fr'
-          };
-          localStorage.setItem('currentProject', JSON.stringify(project));
+        if (!analyzeResponse.ok) {
+          throw new Error('Analysis failed');
         }
+
+        profile = await analyzeResponse.json();
       } catch (analysisError) {
         console.error('Analysis error:', analysisError);
-        // Create a basic structured profile as fallback
-        project.structuredProfile = {
+        profile = {
           siteName: project.siteType === 'personal' ? 'Mon Portfolio' : 'Mon Entreprise',
           tagline: 'Site web professionnel',
           description: deepAnswers.slice(0, 200),
@@ -114,23 +91,41 @@ export default function Step2() {
           keyHighlights: ['Qualité', 'Professionnalisme', 'Innovation'],
           recommendedCTA: 'Nous contacter',
           colors: ['#3B82F6', '#8B5CF6', '#EF4444'],
+          sections: [],
           lang: project.language || 'fr'
         };
-        localStorage.setItem('currentProject', JSON.stringify(project));
       }
 
-      console.log('Navigating to step 3...');
+      const updateResponse = await fetch(`/api/projects/${projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deepAnswers,
+          structuredProfile: profile
+        })
+      });
+
+      if (!updateResponse.ok) {
+        throw new Error('Failed to update project');
+      }
+
+      const updatedProject: Project = await updateResponse.json();
+      setProject(updatedProject);
+
       navigate(`/new/step3/${projectId}`);
     } catch (error) {
       console.error('Error in handleContinue:', error);
-      // Force navigation with minimal project
-      navigate(`/new/step3/${projectId}`);
+      setError(
+        t('step2.saveError', {
+          defaultValue: 'Une erreur est survenue lors de l\'enregistrement. Veuillez réessayer.'
+        })
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
-  const isValid = deepAnswers.length >= 50;
+  const isValid = deepAnswers.length >= 50 && !isFetching;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 relative overflow-hidden">
@@ -172,6 +167,11 @@ export default function Step2() {
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
             {t('step2.subtitle')}
           </p>
+          {error && (
+            <p className="mt-4 text-sm text-red-500">
+              {error}
+            </p>
+          )}
         </motion.div>
 
         <motion.div
@@ -186,8 +186,9 @@ export default function Step2() {
             placeholder={t('step2.placeholder')}
             className="w-full h-80 resize-none border-none outline-none bg-transparent text-gray-900 placeholder-gray-500 text-lg leading-relaxed"
             style={{ minHeight: '320px' }}
+            disabled={isFetching}
           />
-          
+
           <div className="flex justify-between items-center mt-4 pt-4 border-t border-gray-200">
             <span className={`text-sm ${
               deepAnswers.length >= 50 ? 'text-green-600' : 'text-gray-500'
