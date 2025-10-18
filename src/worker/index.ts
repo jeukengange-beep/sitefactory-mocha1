@@ -91,7 +91,7 @@ app.post("/api/projects", async (c) => {
     
     const slug = nanoid(12);
     const now = new Date().toISOString();
-
+    
     // Insert into database
     const insertSql = `
       INSERT INTO projects (
@@ -110,33 +110,22 @@ app.post("/api/projects", async (c) => {
     `;
 
     const insertResult = await c.env.DB.prepare(insertSql)
-      .bind(
-        slug,
-        data.siteType,
-        data.language,
-        'draft',
-        now,
-        now,
-        null,
-        null,
-        null,
-        null
-      )
+      .bind(slug, data.siteType, data.language, 'draft', now, now)
       .run();
 
-    const lastInsertRowId = insertResult.meta.last_row_id;
+    const projectId = insertResult.meta?.last_row_id;
 
-    const createdRow = await c.env.DB.prepare(
-      "SELECT * FROM projects WHERE id = ?"
-    )
-      .bind(lastInsertRowId)
-      .first<DbProjectRow>();
+    const project = {
+      id: projectId ?? Date.now(),
+      slug,
+      siteType: data.siteType,
+      language: data.language,
+      status: 'draft' as const,
+      createdAt: now,
+      updatedAt: now,
+    };
 
-    if (!createdRow) {
-      throw new Error('Failed to load created project');
-    }
-
-    return c.json(mapProjectFromRow(createdRow));
+    return c.json(project);
   } catch (error) {
     console.error('Error creating project:', error);
     return c.json({ error: 'Failed to create project' }, 500);
@@ -158,12 +147,13 @@ app.patch("/api/projects/:id", async (c) => {
       updateSql += ", deep_answers = ?";
       params.push(data.deepAnswers ?? null);
     }
-
+    
     if (data.structuredProfile !== undefined) {
       updateSql += ", structured_profile = ?";
-      params.push(
-        data.structuredProfile ? JSON.stringify(data.structuredProfile) : null
-      );
+      const structuredProfileValue = typeof data.structuredProfile === "string"
+        ? data.structuredProfile
+        : JSON.stringify(data.structuredProfile);
+      params.push(structuredProfileValue);
     }
 
     if (data.selectedInspirations !== undefined) {
@@ -175,11 +165,9 @@ app.patch("/api/projects/:id", async (c) => {
 
     if (data.generatedImages !== undefined) {
       updateSql += ", generated_images = ?";
-      params.push(
-        data.generatedImages ? JSON.stringify(data.generatedImages) : null
-      );
+      params.push(JSON.stringify(data.generatedImages));
     }
-
+    
     if (data.status !== undefined) {
       updateSql += ", status = ?";
       params.push(data.status);
@@ -213,13 +201,28 @@ app.get("/api/projects/:slug", async (c) => {
 
     const result = await c.env.DB.prepare(
       "SELECT * FROM projects WHERE slug = ?"
-    ).bind(slug).first<DbProjectRow>();
+    ).bind(slug).first();
 
     if (!result) {
       return c.json({ error: 'Project not found' }, 404);
     }
 
-    return c.json(mapProjectFromRow(result));
+    // Parse JSON fields and normalize casing
+    const project = {
+      id: result.id,
+      slug: result.slug,
+      siteType: result.site_type,
+      deepAnswers: result.deep_answers ?? undefined,
+      structuredProfile: result.structured_profile ? JSON.parse(result.structured_profile as string) : undefined,
+      selectedInspirations: result.selected_inspirations ? JSON.parse(result.selected_inspirations as string) : undefined,
+      generatedImages: result.generated_images ? JSON.parse(result.generated_images as string) : undefined,
+      language: result.language,
+      status: result.status,
+      createdAt: result.created_at,
+      updatedAt: result.updated_at,
+    };
+
+    return c.json(project);
   } catch (error) {
     console.error('Error fetching project:', error);
     return c.json({ error: 'Failed to fetch project' }, 500);

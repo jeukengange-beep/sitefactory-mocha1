@@ -3,9 +3,10 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'framer-motion';
 import { ArrowRight, ArrowLeft } from 'lucide-react';
-import { Project, StructuredProfile } from '@/shared/types';
+import type { StructuredProfile } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
+import { persistProjectUpdate } from '@/react-app/utils/projectApi';
 
 export default function Step2() {
   const { t } = useTranslation();
@@ -18,38 +19,21 @@ export default function Step2() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const loadProject = async () => {
-      if (!projectId) {
-        navigate('/new/step1');
-        return;
+    // Load saved answers from localStorage
+    const savedProject = localStorage.getItem('currentProject');
+    if (savedProject) {
+      const project = JSON.parse(savedProject);
+      const projectSiteType = project.siteType ?? project.site_type;
+      const projectLanguage = project.language ?? project.lang ?? 'fr';
+
+      project.siteType = projectSiteType;
+      project.language = projectLanguage;
+      project.id = project.id ?? (projectId ? Number(projectId) : projectId);
+      if (project.deepAnswers) {
+        setDeepAnswers(project.deepAnswers);
       }
-
-      setIsFetching(true);
-      setError(null);
-
-      try {
-        const response = await fetch(`/api/projects/by-id/${projectId}`);
-        if (!response.ok) {
-          throw new Error('Failed to fetch project');
-        }
-
-        const projectData: Project = await response.json();
-        setProject(projectData);
-        setDeepAnswers(projectData.deepAnswers ?? '');
-      } catch (err) {
-        console.error('Error loading project:', err);
-        setError(
-          t('step2.loadError', {
-            defaultValue: 'Impossible de charger votre projet. Veuillez revenir à l\'étape 1.'
-          })
-        );
-      } finally {
-        setIsFetching(false);
-      }
-    };
-
-    loadProject();
-  }, [navigate, projectId, t]);
+    }
+  }, [projectId]);
 
   const handleBack = () => {
     navigate('/new/step1');
@@ -61,7 +45,27 @@ export default function Step2() {
     setIsLoading(true);
     setError(null);
     try {
-      let profile: StructuredProfile;
+      const savedProject = localStorage.getItem('currentProject');
+      if (!savedProject) {
+        console.log('No saved project found, redirecting to step 1');
+        navigate('/new/step1');
+        return;
+      }
+
+      const project = JSON.parse(savedProject);
+      const projectSiteType = project.siteType ?? project.site_type;
+      const projectLanguage = project.language ?? project.lang ?? 'fr';
+      project.siteType = projectSiteType;
+      project.language = projectLanguage;
+      project.id = project.id ?? (projectId ? Number(projectId) : projectId);
+      console.log('Current project:', project);
+      console.log('Project ID from params:', projectId);
+
+      // Save answers immediately to localStorage
+      project.deepAnswers = deepAnswers;
+      localStorage.setItem('currentProject', JSON.stringify(project));
+
+      let structuredProfile: StructuredProfile | undefined;
 
       try {
         const analyzeResponse = await fetch('/api/analyze', {
@@ -69,20 +73,27 @@ export default function Step2() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             deepAnswers,
-            siteType: project.siteType,
-            language: project.language
+            siteType: projectSiteType,
+            language: projectLanguage
           })
         });
 
-        if (!analyzeResponse.ok) {
-          throw new Error('Analysis failed');
+        if (analyzeResponse.ok) {
+          console.log('Analysis successful');
+          structuredProfile = await analyzeResponse.json();
+          console.log('Structured profile:', structuredProfile);
+        } else {
+          console.log('Analysis failed, continuing without structured profile');
         }
 
         profile = await analyzeResponse.json();
       } catch (analysisError) {
         console.error('Analysis error:', analysisError);
-        profile = {
-          siteName: project.siteType === 'personal' ? 'Mon Portfolio' : 'Mon Entreprise',
+      }
+
+      if (!structuredProfile) {
+        structuredProfile = {
+          siteName: projectSiteType === 'personal' ? 'Mon Portfolio' : 'Mon Entreprise',
           tagline: 'Site web professionnel',
           description: deepAnswers.slice(0, 200),
           tone: 'moderne',
@@ -91,35 +102,35 @@ export default function Step2() {
           keyHighlights: ['Qualité', 'Professionnalisme', 'Innovation'],
           recommendedCTA: 'Nous contacter',
           colors: ['#3B82F6', '#8B5CF6', '#EF4444'],
-          sections: [],
-          lang: project.language || 'fr'
+          lang: projectLanguage || 'fr'
         };
       }
 
-      const updateResponse = await fetch(`/api/projects/${projectId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deepAnswers,
-          structuredProfile: profile
+      // Save structured profile to project
+      project.structuredProfile = structuredProfile;
+      localStorage.setItem('currentProject', JSON.stringify(project));
+
+      const persisted = await persistProjectUpdate(projectId ?? project.id, {
+        deepAnswers,
+        structuredProfile,
+      }, {
+        errorMessage: t('errors.backendSaveFailed', {
+          defaultValue: 'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.'
         })
       });
 
-      if (!updateResponse.ok) {
-        throw new Error('Failed to update project');
+      if (persisted) {
+        console.log('Backend save successful');
       }
 
-      const updatedProject: Project = await updateResponse.json();
-      setProject(updatedProject);
-
-      navigate(`/new/step3/${projectId}`);
+      const nextProjectId = projectId ?? project.id;
+      console.log('Navigating to step 3...', nextProjectId);
+      navigate(`/new/step3/${nextProjectId}`);
     } catch (error) {
       console.error('Error in handleContinue:', error);
-      setError(
-        t('step2.saveError', {
-          defaultValue: 'Une erreur est survenue lors de l\'enregistrement. Veuillez réessayer.'
-        })
-      );
+      // Force navigation with minimal project
+      const fallbackProjectId = projectId ?? Date.now();
+      navigate(`/new/step3/${fallbackProjectId}`);
     } finally {
       setIsLoading(false);
     }

@@ -46,6 +46,7 @@
     "cf-typegen": "wrangler types",
     "check": "tsc && vite build && wrangler deploy --dry-run",
     "dev": "vite",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test:e2e": "./tests/e2e/project-flow.sh"
   }
 }

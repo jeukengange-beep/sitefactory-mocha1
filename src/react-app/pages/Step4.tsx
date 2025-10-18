@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'framer-motion';
@@ -6,6 +6,7 @@ import { Download, Share2, MessageCircle, ArrowLeft, Eye } from 'lucide-react';
 import { GeneratedImage, Project } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
+import { persistProjectUpdate } from '@/react-app/utils/projectApi';
 
 export default function Step4() {
   const { t } = useTranslation();
@@ -16,9 +17,8 @@ export default function Step4() {
   const [projectSlug, setProjectSlug] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
-  const persistGeneratedImages = useCallback(async (images: GeneratedImage[]) => {
-    if (!projectId) return;
-
+  const generateImages = useCallback(async () => {
+    setIsLoading(true);
     try {
       const response = await fetch(`/api/projects/${projectId}`, {
         method: 'PATCH',
@@ -38,44 +38,63 @@ export default function Step4() {
     }
   }, [projectId]);
 
-  const generateImagesForProject = useCallback(async (currentProject: Project) => {
-    try {
-      const generateResponse = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          structuredProfile: currentProject.structuredProfile,
-          selectedInspirations: currentProject.selectedInspirations ?? []
-        })
-      });
+      const project = JSON.parse(savedProject);
+      project.siteType = project.siteType ?? project.site_type;
+      project.language = project.language ?? project.lang ?? 'fr';
+      project.id = project.id ?? (projectId ? Number(projectId) : projectId);
 
-      if (!generateResponse.ok) {
-        throw new Error('Image generation failed');
+      if (!project.structuredProfile) {
+        navigate('/new/step2');
+        return;
       }
 
-      const aiGeneratedImages: GeneratedImage[] = await generateResponse.json();
-      setGeneratedImages(aiGeneratedImages);
-      await persistGeneratedImages(aiGeneratedImages);
-    } catch (error) {
-      console.error('Error generating AI images, using fallback:', error);
+      const existingSlug = typeof project.slug === 'string' ? project.slug : undefined;
+      const persistedSlug = existingSlug ?? `project-${Date.now()}`;
+      project.slug = persistedSlug;
+      setProjectSlug(persistedSlug);
 
-      const profile = currentProject.structuredProfile;
-      const fallbackImages: GeneratedImage[] = [
-        {
-          id: 'overview',
-          type: 'overview',
-          url: 'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=800&h=600&fit=crop',
-          filename: 'site-overview.png'
+      // Generate real AI images based on structured profile and inspirations
+      try {
+        const generateResponse = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            structuredProfile: project.structuredProfile,
+            selectedInspirations: project.selectedInspirations || []
+          })
+        });
+
+        if (generateResponse.ok) {
+          const aiGeneratedImages = await generateResponse.json();
+          setGeneratedImages(aiGeneratedImages);
+
+          project.generatedImages = aiGeneratedImages;
+          project.status = 'completed';
+          localStorage.setItem('currentProject', JSON.stringify(project));
+
+          await persistProjectUpdate(projectId ?? project.id, {
+            generatedImages: aiGeneratedImages,
+            status: 'completed',
+          }, {
+            errorMessage: t('errors.backendSaveFailed', {
+              defaultValue: 'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.'
+            })
+          });
+        } else {
+          throw new Error('Image generation failed');
         }
-      ];
+      } catch (error) {
+        console.error('Error generating AI images, using fallback:', error);
 
-      if (profile?.sections) {
-        const contextualImages = [
-          'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=800&h=400&fit=crop',
-          'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=800&h=400&fit=crop',
-          'https://images.unsplash.com/photo-1586717791821-3f44a563fa4c?w=800&h=400&fit=crop',
-          'https://images.unsplash.com/photo-1574169208507-84376144848b?w=800&h=400&fit=crop',
-          'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=800&h=400&fit=crop'
+        // Fallback to curated images based on profile
+        const profile = project.structuredProfile;
+        const fallbackImages: GeneratedImage[] = [
+          {
+            id: 'overview',
+            type: 'overview',
+            url: 'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=800&h=600&fit=crop',
+            filename: 'site-overview.png'
+          }
         ];
 
         profile.sections.forEach((section, index) => {
@@ -86,6 +105,21 @@ export default function Step4() {
             url: contextualImages[index % contextualImages.length],
             filename: `${section.id}-section.png`
           });
+        }
+
+        setGeneratedImages(fallbackImages);
+
+        project.generatedImages = fallbackImages;
+        project.status = 'completed';
+        localStorage.setItem('currentProject', JSON.stringify(project));
+
+        await persistProjectUpdate(projectId ?? project.id, {
+          generatedImages: fallbackImages,
+          status: 'completed',
+        }, {
+          errorMessage: t('errors.backendSaveFailed', {
+            defaultValue: 'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.'
+          })
         });
       }
 
@@ -94,53 +128,11 @@ export default function Step4() {
     } finally {
       setIsLoading(false);
     }
-  }, [persistGeneratedImages]);
+  }, [navigate, projectId, t]);
 
   useEffect(() => {
-    const loadProject = async () => {
-      if (!projectId) {
-        navigate('/new/step1');
-        return;
-      }
-
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const response = await fetch(`/api/projects/by-id/${projectId}`);
-        if (!response.ok) {
-          throw new Error('Failed to load project');
-        }
-
-        const projectData: Project = await response.json();
-
-        if (!projectData.structuredProfile) {
-          navigate(`/new/step2/${projectId}`);
-          return;
-        }
-
-        setProjectSlug(projectData.slug);
-
-        if (projectData.generatedImages && projectData.generatedImages.length > 0) {
-          setGeneratedImages(projectData.generatedImages);
-          setIsLoading(false);
-          return;
-        }
-
-        await generateImagesForProject(projectData);
-      } catch (err) {
-        console.error('Error loading project:', err);
-        setError(
-          t('step4.loadError', {
-            defaultValue: 'Impossible de charger votre projet. Veuillez réessayer.'
-          })
-        );
-        setIsLoading(false);
-      }
-    };
-
-    loadProject();
-  }, [generateImagesForProject, navigate, projectId, t]);
+    generateImages();
+  }, [generateImages]);
 
   const handleBack = () => {
     navigate(`/new/step3/${projectId}`);

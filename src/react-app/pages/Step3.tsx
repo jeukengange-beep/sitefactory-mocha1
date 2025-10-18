@@ -24,8 +24,16 @@ export default function Step3() {
         return;
       }
 
-      setIsLoadingInspirations(true);
-      setError(null);
+      const project = JSON.parse(savedProject);
+      project.siteType = project.siteType ?? project.site_type;
+      project.language = project.language ?? project.lang ?? 'fr';
+      project.id = project.id ?? (projectId ? Number(projectId) : projectId);
+
+      if (!project.structuredProfile) {
+        // If no structured profile, redirect back to step 2
+        navigate(`/new/step2/${projectId}`);
+        return;
+      }
 
       try {
         const response = await fetch(`/api/projects/by-id/${projectId}`);
