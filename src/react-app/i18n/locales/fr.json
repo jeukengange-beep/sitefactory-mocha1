@@ -1,0 +1,66 @@
+{
+  "app": {
+    "name": "Site-Factory",
+    "tagline": "Générez l'aperçu visuel de votre site web en 4 étapes"
+  },
+  "common": {
+    "continue": "Continuer",
+    "back": "Retour",
+    "next": "Suivant",
+    "finish": "Terminer",
+    "loading": "Chargement...",
+    "error": "Une erreur s'est produite",
+    "retry": "Réessayer",
+    "cancel": "Annuler",
+    "save": "Sauvegarder",
+    "share": "Partager",
+    "download": "Télécharger"
+  },
+  "nav": {
+    "step1": "Type de site",
+    "step2": "Questionnaire",
+    "step3": "Inspirations",
+    "step4": "Aperçus"
+  },
+  "step1": {
+    "title": "Quel type de site souhaitez-vous créer ?",
+    "subtitle": "Choisissez le type qui correspond le mieux à votre projet",
+    "personal": {
+      "title": "Site Personnel",
+      "description": "Portfolio, blog, CV en ligne, présentation personnelle"
+    },
+    "business": {
+      "title": "Site Professionnel",
+      "description": "Entreprise, freelance, service, boutique en ligne"
+    }
+  },
+  "step2": {
+    "title": "Parlez-nous de votre projet",
+    "subtitle": "Plus vous serez précis, plus l'aperçu sera personnalisé",
+    "placeholder": "Décrivez votre activité, vos objectifs, votre style préféré, vos couleurs, votre public cible, ce qui vous rend unique...\n\nExemple : Je suis photographe spécialisée dans les mariages. Je veux un site élégant et romantique avec des tons pastel. Mon objectif est d'attirer de futurs mariés et de présenter mon portfolio. J'aime les designs minimalistes avec beaucoup d'espace blanc.",
+    "minLength": "Minimum 50 caractères requis"
+  },
+  "step3": {
+    "title": "Sources d'inspiration",
+    "subtitle": "Nous avons trouvé ces sites qui pourraient vous inspirer",
+    "selectMax": "Sélectionnez jusqu'à 2 inspirations",
+    "selected": "sélectionné",
+    "justification": "Pourquoi cette inspiration :"
+  },
+  "step4": {
+    "title": "Vos aperçus sont prêts !",
+    "subtitle": "Voici les aperçus visuels de votre futur site web",
+    "overview": "Vue d'ensemble",
+    "sections": "Sections",
+    "downloadAll": "Tout télécharger",
+    "shareLink": "Lien de partage",
+    "whatsappCTA": "Parler sur WhatsApp",
+    "price": "35 000 FCFA",
+    "priceDescription": "pour la réalisation complète de votre site"
+  },
+  "errors": {
+    "genericError": "Une erreur inattendue s'est produite",
+    "networkError": "Erreur de connexion",
+    "validationError": "Données invalides"
+  }
+}

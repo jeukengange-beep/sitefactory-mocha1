@@ -1,0 +1,257 @@
+import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useNavigate, useParams } from 'react-router';
+import { motion } from 'framer-motion';
+import { ArrowRight, ArrowLeft } from 'lucide-react';
+import LanguageSwitch from '@/react-app/components/LanguageSwitch';
+import StepIndicator from '@/react-app/components/StepIndicator';
+
+export default function Step2() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { projectId } = useParams();
+  const [deepAnswers, setDeepAnswers] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    // Load saved answers from localStorage
+    const savedProject = localStorage.getItem('currentProject');
+    if (savedProject) {
+      const project = JSON.parse(savedProject);
+      if (project.deepAnswers) {
+        setDeepAnswers(project.deepAnswers);
+      }
+    }
+  }, []);
+
+  const handleBack = () => {
+    navigate('/new/step1');
+  };
+
+  const handleContinue = async () => {
+    if (deepAnswers.length < 50) return;
+
+    setIsLoading(true);
+    try {
+      const savedProject = localStorage.getItem('currentProject');
+      if (!savedProject) {
+        console.log('No saved project found, redirecting to step 1');
+        navigate('/new/step1');
+        return;
+      }
+
+      const project = JSON.parse(savedProject);
+      console.log('Current project:', project);
+      console.log('Project ID from params:', projectId);
+      
+      // Save answers immediately to localStorage
+      project.deepAnswers = deepAnswers;
+      localStorage.setItem('currentProject', JSON.stringify(project));
+
+      try {
+        // Try to analyze the answers with OpenAI
+        console.log('Starting analysis...');
+        const analyzeResponse = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            deepAnswers,
+            siteType: project.siteType,
+            language: project.language
+          })
+        });
+
+        if (analyzeResponse.ok) {
+          console.log('Analysis successful');
+          const structuredProfile = await analyzeResponse.json();
+          console.log('Structured profile:', structuredProfile);
+          
+          // Save structured profile to project
+          project.structuredProfile = structuredProfile;
+          localStorage.setItem('currentProject', JSON.stringify(project));
+
+          // Try to save to backend
+          try {
+            await fetch(`/api/projects/${projectId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                deepAnswers,
+                structuredProfile: JSON.stringify(structuredProfile)
+              })
+            });
+            console.log('Backend save successful');
+          } catch (backendError) {
+            console.log('Backend save failed, continuing with localStorage:', backendError);
+          }
+        } else {
+          console.log('Analysis failed, continuing without structured profile');
+          // Create a basic structured profile as fallback
+          project.structuredProfile = {
+            siteName: project.siteType === 'personal' ? 'Mon Portfolio' : 'Mon Entreprise',
+            tagline: 'Site web professionnel',
+            description: deepAnswers.slice(0, 200),
+            tone: 'moderne',
+            ambience: 'professionnel et élégant',
+            primaryGoal: 'Présenter mon activité',
+            keyHighlights: ['Qualité', 'Professionnalisme', 'Innovation'],
+            recommendedCTA: 'Nous contacter',
+            colors: ['#3B82F6', '#8B5CF6', '#EF4444'],
+            lang: project.language || 'fr'
+          };
+          localStorage.setItem('currentProject', JSON.stringify(project));
+        }
+      } catch (analysisError) {
+        console.error('Analysis error:', analysisError);
+        // Create a basic structured profile as fallback
+        project.structuredProfile = {
+          siteName: project.siteType === 'personal' ? 'Mon Portfolio' : 'Mon Entreprise',
+          tagline: 'Site web professionnel',
+          description: deepAnswers.slice(0, 200),
+          tone: 'moderne',
+          ambience: 'professionnel et élégant',
+          primaryGoal: 'Présenter mon activité',
+          keyHighlights: ['Qualité', 'Professionnalisme', 'Innovation'],
+          recommendedCTA: 'Nous contacter',
+          colors: ['#3B82F6', '#8B5CF6', '#EF4444'],
+          lang: project.language || 'fr'
+        };
+        localStorage.setItem('currentProject', JSON.stringify(project));
+      }
+
+      console.log('Navigating to step 3...');
+      navigate(`/new/step3/${projectId}`);
+    } catch (error) {
+      console.error('Error in handleContinue:', error);
+      // Force navigation with minimal project
+      navigate(`/new/step3/${projectId}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const isValid = deepAnswers.length >= 50;
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 relative overflow-hidden">
+      {/* Background decorations */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-blue-400/10 to-purple-400/10 rounded-full blur-3xl" />
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-tr from-indigo-400/10 to-pink-400/10 rounded-full blur-3xl" />
+      </div>
+
+      {/* Header */}
+      <header className="relative z-10 flex justify-between items-center p-6 lg:p-8">
+        <motion.h1
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent"
+        >
+          Site-Factory
+        </motion.h1>
+        
+        <motion.div
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+        >
+          <LanguageSwitch />
+        </motion.div>
+      </header>
+
+      <div className="relative z-10 max-w-4xl mx-auto px-6 py-8">
+        <StepIndicator currentStep={2} totalSteps={4} />
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-center mb-12"
+        >
+          <h2 className="text-4xl lg:text-5xl font-bold text-gray-900 mb-4">
+            {t('step2.title')}
+          </h2>
+          <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+            {t('step2.subtitle')}
+          </p>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="bg-white/70 backdrop-blur-sm rounded-3xl p-8 border border-white/50 shadow-lg mb-8"
+        >
+          <textarea
+            value={deepAnswers}
+            onChange={(e) => setDeepAnswers(e.target.value)}
+            placeholder={t('step2.placeholder')}
+            className="w-full h-80 resize-none border-none outline-none bg-transparent text-gray-900 placeholder-gray-500 text-lg leading-relaxed"
+            style={{ minHeight: '320px' }}
+          />
+          
+          <div className="flex justify-between items-center mt-4 pt-4 border-t border-gray-200">
+            <span className={`text-sm ${
+              deepAnswers.length >= 50 ? 'text-green-600' : 'text-gray-500'
+            }`}>
+              {deepAnswers.length < 50 
+                ? `${deepAnswers.length}/50 - ${t('step2.minLength')}`
+                : `${deepAnswers.length} caractères`
+              }
+            </span>
+            
+            {deepAnswers.length >= 50 && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="flex items-center gap-2 text-green-600"
+              >
+                <div className="w-2 h-2 bg-green-500 rounded-full" />
+                <span className="text-sm font-medium">Prêt à continuer</span>
+              </motion.div>
+            )}
+          </div>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.4 }}
+          className="flex justify-between items-center"
+        >
+          <motion.button
+            onClick={handleBack}
+            className="flex items-center gap-2 px-6 py-3 rounded-xl bg-white/70 backdrop-blur-sm border border-white/50 text-gray-700 font-medium hover:bg-white/80 transition-colors"
+            whileHover={{ x: -2 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <ArrowLeft className="w-4 h-4" />
+            {t('common.back')}
+          </motion.button>
+
+          <motion.button
+            onClick={handleContinue}
+            disabled={!isValid || isLoading}
+            className={`flex items-center gap-3 px-8 py-4 rounded-2xl font-semibold text-lg transition-all duration-300 ${
+              isValid && !isLoading
+                ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/30 hover:scale-105'
+                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+            }`}
+            whileHover={isValid && !isLoading ? { y: -2 } : {}}
+            whileTap={isValid && !isLoading ? { scale: 0.95 } : {}}
+          >
+            {isLoading ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                {t('common.loading')}
+              </>
+            ) : (
+              <>
+                {t('common.continue')}
+                <ArrowRight className="w-5 h-5" />
+              </>
+            )}
+          </motion.button>
+        </motion.div>
+      </div>
+    </div>
+  );
+}

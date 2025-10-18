@@ -1,0 +1,66 @@
+{
+  "app": {
+    "name": "Site-Factory",
+    "tagline": "Generate your website visual preview in 4 steps"
+  },
+  "common": {
+    "continue": "Continue",
+    "back": "Back",
+    "next": "Next",
+    "finish": "Finish",
+    "loading": "Loading...",
+    "error": "An error occurred",
+    "retry": "Retry",
+    "cancel": "Cancel",
+    "save": "Save",
+    "share": "Share",
+    "download": "Download"
+  },
+  "nav": {
+    "step1": "Site Type",
+    "step2": "Questionnaire",
+    "step3": "Inspirations",
+    "step4": "Previews"
+  },
+  "step1": {
+    "title": "What type of website do you want to create?",
+    "subtitle": "Choose the type that best fits your project",
+    "personal": {
+      "title": "Personal Website",
+      "description": "Portfolio, blog, online CV, personal presentation"
+    },
+    "business": {
+      "title": "Business Website",
+      "description": "Company, freelance, service, online store"
+    }
+  },
+  "step2": {
+    "title": "Tell us about your project",
+    "subtitle": "The more specific you are, the more personalized the preview will be",
+    "placeholder": "Describe your activity, goals, preferred style, colors, target audience, what makes you unique...\n\nExample: I'm a photographer specializing in weddings. I want an elegant and romantic website with pastel tones. My goal is to attract future brides and showcase my portfolio. I love minimalist designs with lots of white space.",
+    "minLength": "Minimum 50 characters required"
+  },
+  "step3": {
+    "title": "Sources of inspiration",
+    "subtitle": "We found these websites that could inspire you",
+    "selectMax": "Select up to 2 inspirations",
+    "selected": "selected",
+    "justification": "Why this inspiration:"
+  },
+  "step4": {
+    "title": "Your previews are ready!",
+    "subtitle": "Here are the visual previews of your future website",
+    "overview": "Overview",
+    "sections": "Sections",
+    "downloadAll": "Download All",
+    "shareLink": "Share Link",
+    "whatsappCTA": "Chat on WhatsApp",
+    "price": "35,000 CFA",
+    "priceDescription": "for the complete realization of your website"
+  },
+  "errors": {
+    "genericError": "An unexpected error occurred",
+    "networkError": "Connection error",
+    "validationError": "Invalid data"
+  }
+}
