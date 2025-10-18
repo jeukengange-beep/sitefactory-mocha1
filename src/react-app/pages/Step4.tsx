@@ -49,6 +49,46 @@ function buildFallbackImages(profile: StructuredProfile | null): GeneratedImage[
   return fallbackImages;
 }
 
+const overviewFallbackImage = 'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=1200&h=900&fit=crop&auto=format&q=80';
+const contextualFallbackImages = [
+  'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=1200&h=900&fit=crop&auto=format&q=80',
+  'https://images.unsplash.com/photo-1521737604893-d14cc237f11d?w=1200&h=900&fit=crop&auto=format&q=80',
+  'https://images.unsplash.com/photo-1483478550801-ceba5fe50e8e?w=1200&h=900&fit=crop&auto=format&q=80',
+  'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=1200&h=900&fit=crop&auto=format&q=80',
+  'https://images.unsplash.com/photo-1574169208507-84376144848b?w=1200&h=900&fit=crop&auto=format&q=80',
+];
+
+const fallbackSectionIds = ['hero', 'about', 'services', 'work', 'testimonials', 'contact'] as const;
+
+function buildFallbackImages(profile: StructuredProfile | null): GeneratedImage[] {
+  const sections = profile?.sections && profile.sections.length > 0
+    ? profile.sections
+    : fallbackSectionIds.map((id) => ({ id }));
+
+  const fallbackImages: GeneratedImage[] = [
+    {
+      id: 'overview',
+      type: 'overview',
+      url: overviewFallbackImage,
+      filename: 'site-overview.png',
+    },
+  ];
+
+  sections.forEach((section, index) => {
+    const sectionId = typeof section.id === 'string' ? section.id : `section-${index}`;
+
+    fallbackImages.push({
+      id: sectionId,
+      type: 'section',
+      sectionId,
+      url: contextualFallbackImages[index % contextualFallbackImages.length],
+      filename: `${sectionId}-section.png`,
+    });
+  });
+
+  return fallbackImages;
+}
+
 export default function Step4() {
   const { t } = useTranslation();
   const navigate = useNavigate();
