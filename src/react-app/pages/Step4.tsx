@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'framer-motion';
@@ -6,6 +6,7 @@ import { Download, Share2, MessageCircle, ArrowLeft, Eye } from 'lucide-react';
 import { GeneratedImage } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
+import { persistProjectUpdate } from '@/react-app/utils/projectApi';
 
 export default function Step4() {
   const { t } = useTranslation();
@@ -15,11 +16,7 @@ export default function Step4() {
   const [isLoading, setIsLoading] = useState(true);
   const [projectSlug, setProjectSlug] = useState<string>('');
 
-  useEffect(() => {
-    generateImages();
-  }, []);
-
-  const generateImages = async () => {
+  const generateImages = useCallback(async () => {
     setIsLoading(true);
     try {
       const savedProject = localStorage.getItem('currentProject');
@@ -29,11 +26,19 @@ export default function Step4() {
       }
 
       const project = JSON.parse(savedProject);
-      
+      project.siteType = project.siteType ?? project.site_type;
+      project.language = project.language ?? project.lang ?? 'fr';
+      project.id = project.id ?? (projectId ? Number(projectId) : projectId);
+
       if (!project.structuredProfile) {
         navigate('/new/step2');
         return;
       }
+
+      const existingSlug = typeof project.slug === 'string' ? project.slug : undefined;
+      const persistedSlug = existingSlug ?? `project-${Date.now()}`;
+      project.slug = persistedSlug;
+      setProjectSlug(persistedSlug);
 
       // Generate real AI images based on structured profile and inspirations
       try {
@@ -49,35 +54,25 @@ export default function Step4() {
         if (generateResponse.ok) {
           const aiGeneratedImages = await generateResponse.json();
           setGeneratedImages(aiGeneratedImages);
-          
-          // Generate slug and save final project
-          const slug = `project-${Date.now()}`;
-          setProjectSlug(slug);
-          
+
           project.generatedImages = aiGeneratedImages;
-          project.slug = slug;
           project.status = 'completed';
           localStorage.setItem('currentProject', JSON.stringify(project));
-          
-          // Try to save to backend
-          try {
-            await fetch(`/api/projects/${projectId}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                generatedImages: JSON.stringify(aiGeneratedImages),
-                status: 'completed'
-              })
-            });
-          } catch (error) {
-            console.log('Backend save failed, continuing with localStorage');
-          }
+
+          await persistProjectUpdate(projectId ?? project.id, {
+            generatedImages: aiGeneratedImages,
+            status: 'completed',
+          }, {
+            errorMessage: t('errors.backendSaveFailed', {
+              defaultValue: 'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.'
+            })
+          });
         } else {
           throw new Error('Image generation failed');
         }
       } catch (error) {
         console.error('Error generating AI images, using fallback:', error);
-        
+
         // Fallback to curated images based on profile
         const profile = project.structuredProfile;
         const fallbackImages: GeneratedImage[] = [
@@ -111,22 +106,30 @@ export default function Step4() {
         }
 
         setGeneratedImages(fallbackImages);
-        
-        // Generate slug and save final project
-        const slug = `project-${Date.now()}`;
-        setProjectSlug(slug);
-        
+
         project.generatedImages = fallbackImages;
-        project.slug = slug;
         project.status = 'completed';
         localStorage.setItem('currentProject', JSON.stringify(project));
+
+        await persistProjectUpdate(projectId ?? project.id, {
+          generatedImages: fallbackImages,
+          status: 'completed',
+        }, {
+          errorMessage: t('errors.backendSaveFailed', {
+            defaultValue: 'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.'
+          })
+        });
       }
     } catch (error) {
       console.error('Error in image generation process:', error);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [navigate, projectId, t]);
+
+  useEffect(() => {
+    generateImages();
+  }, [generateImages]);
 
   const handleBack = () => {
     navigate(`/new/step3/${projectId}`);

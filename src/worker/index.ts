@@ -24,25 +24,27 @@ app.post("/api/projects", async (c) => {
     const slug = nanoid(12);
     const now = new Date().toISOString();
     
-    const project = {
-      id: Date.now(), // In production, use proper ID generation
-      slug,
-      site_type: data.siteType,
-      language: data.language,
-      status: 'draft',
-      created_at: now,
-      updated_at: now
-    };
-
     // Insert into database
     const insertSql = `
       INSERT INTO projects (slug, site_type, language, status, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?)
     `;
-    
-    await c.env.DB.prepare(insertSql)
+
+    const insertResult = await c.env.DB.prepare(insertSql)
       .bind(slug, data.siteType, data.language, 'draft', now, now)
       .run();
+
+    const projectId = insertResult.meta?.last_row_id;
+
+    const project = {
+      id: projectId ?? Date.now(),
+      slug,
+      siteType: data.siteType,
+      language: data.language,
+      status: 'draft' as const,
+      createdAt: now,
+      updatedAt: now,
+    };
 
     return c.json(project);
   } catch (error) {
@@ -67,9 +69,22 @@ app.patch("/api/projects/:id", async (c) => {
       params.push(data.deepAnswers);
     }
     
+    if (data.structuredProfile !== undefined) {
+      updateSql += ", structured_profile = ?";
+      const structuredProfileValue = typeof data.structuredProfile === "string"
+        ? data.structuredProfile
+        : JSON.stringify(data.structuredProfile);
+      params.push(structuredProfileValue);
+    }
+
     if (data.selectedInspirations !== undefined) {
       updateSql += ", selected_inspirations = ?";
       params.push(JSON.stringify(data.selectedInspirations));
+    }
+
+    if (data.generatedImages !== undefined) {
+      updateSql += ", generated_images = ?";
+      params.push(JSON.stringify(data.generatedImages));
     }
     
     if (data.status !== undefined) {
@@ -96,19 +111,26 @@ app.get("/api/projects/:slug", async (c) => {
     const result = await c.env.DB.prepare(
       "SELECT * FROM projects WHERE slug = ?"
     ).bind(slug).first();
-    
+
     if (!result) {
       return c.json({ error: 'Project not found' }, 404);
     }
-    
-    // Parse JSON fields
+
+    // Parse JSON fields and normalize casing
     const project = {
-      ...result,
-      structuredProfile: result.structured_profile ? JSON.parse(result.structured_profile as string) : null,
-      selectedInspirations: result.selected_inspirations ? JSON.parse(result.selected_inspirations as string) : null,
-      generatedImages: result.generated_images ? JSON.parse(result.generated_images as string) : null,
+      id: result.id,
+      slug: result.slug,
+      siteType: result.site_type,
+      deepAnswers: result.deep_answers ?? undefined,
+      structuredProfile: result.structured_profile ? JSON.parse(result.structured_profile as string) : undefined,
+      selectedInspirations: result.selected_inspirations ? JSON.parse(result.selected_inspirations as string) : undefined,
+      generatedImages: result.generated_images ? JSON.parse(result.generated_images as string) : undefined,
+      language: result.language,
+      status: result.status,
+      createdAt: result.created_at,
+      updatedAt: result.updated_at,
     };
-    
+
     return c.json(project);
   } catch (error) {
     console.error('Error fetching project:', error);

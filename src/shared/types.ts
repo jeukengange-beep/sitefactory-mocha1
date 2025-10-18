@@ -71,7 +71,9 @@ export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
 
 export const UpdateProjectRequestSchema = z.object({
   deepAnswers: z.string().optional(),
+  structuredProfile: StructuredProfileSchema.optional(),
   selectedInspirations: z.array(InspirationSchema).optional(),
+  generatedImages: z.array(GeneratedImageSchema).optional(),
   status: z.enum(["draft", "completed"]).optional(),
 });
 export type UpdateProjectRequest = z.infer<typeof UpdateProjectRequestSchema>;

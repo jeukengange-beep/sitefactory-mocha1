@@ -61,6 +61,7 @@
   "errors": {
     "genericError": "Une erreur inattendue s'est produite",
     "networkError": "Erreur de connexion",
-    "validationError": "Données invalides"
+    "validationError": "Données invalides",
+    "backendSaveFailed": "Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées."
   }
 }

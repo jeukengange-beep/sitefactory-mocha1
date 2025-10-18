@@ -3,8 +3,10 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'framer-motion';
 import { ArrowRight, ArrowLeft } from 'lucide-react';
+import type { StructuredProfile } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
+import { persistProjectUpdate } from '@/react-app/utils/projectApi';
 
 export default function Step2() {
   const { t } = useTranslation();
@@ -18,11 +20,17 @@ export default function Step2() {
     const savedProject = localStorage.getItem('currentProject');
     if (savedProject) {
       const project = JSON.parse(savedProject);
+      const projectSiteType = project.siteType ?? project.site_type;
+      const projectLanguage = project.language ?? project.lang ?? 'fr';
+
+      project.siteType = projectSiteType;
+      project.language = projectLanguage;
+      project.id = project.id ?? (projectId ? Number(projectId) : projectId);
       if (project.deepAnswers) {
         setDeepAnswers(project.deepAnswers);
       }
     }
-  }, []);
+  }, [projectId]);
 
   const handleBack = () => {
     navigate('/new/step1');
@@ -41,12 +49,19 @@ export default function Step2() {
       }
 
       const project = JSON.parse(savedProject);
+      const projectSiteType = project.siteType ?? project.site_type;
+      const projectLanguage = project.language ?? project.lang ?? 'fr';
+      project.siteType = projectSiteType;
+      project.language = projectLanguage;
+      project.id = project.id ?? (projectId ? Number(projectId) : projectId);
       console.log('Current project:', project);
       console.log('Project ID from params:', projectId);
-      
+
       // Save answers immediately to localStorage
       project.deepAnswers = deepAnswers;
       localStorage.setItem('currentProject', JSON.stringify(project));
+
+      let structuredProfile: StructuredProfile | undefined;
 
       try {
         // Try to analyze the answers with OpenAI
@@ -56,56 +71,25 @@ export default function Step2() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             deepAnswers,
-            siteType: project.siteType,
-            language: project.language
+            siteType: projectSiteType,
+            language: projectLanguage
           })
         });
 
         if (analyzeResponse.ok) {
           console.log('Analysis successful');
-          const structuredProfile = await analyzeResponse.json();
+          structuredProfile = await analyzeResponse.json();
           console.log('Structured profile:', structuredProfile);
-          
-          // Save structured profile to project
-          project.structuredProfile = structuredProfile;
-          localStorage.setItem('currentProject', JSON.stringify(project));
-
-          // Try to save to backend
-          try {
-            await fetch(`/api/projects/${projectId}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                deepAnswers,
-                structuredProfile: JSON.stringify(structuredProfile)
-              })
-            });
-            console.log('Backend save successful');
-          } catch (backendError) {
-            console.log('Backend save failed, continuing with localStorage:', backendError);
-          }
         } else {
           console.log('Analysis failed, continuing without structured profile');
-          // Create a basic structured profile as fallback
-          project.structuredProfile = {
-            siteName: project.siteType === 'personal' ? 'Mon Portfolio' : 'Mon Entreprise',
-            tagline: 'Site web professionnel',
-            description: deepAnswers.slice(0, 200),
-            tone: 'moderne',
-            ambience: 'professionnel et élégant',
-            primaryGoal: 'Présenter mon activité',
-            keyHighlights: ['Qualité', 'Professionnalisme', 'Innovation'],
-            recommendedCTA: 'Nous contacter',
-            colors: ['#3B82F6', '#8B5CF6', '#EF4444'],
-            lang: project.language || 'fr'
-          };
-          localStorage.setItem('currentProject', JSON.stringify(project));
         }
       } catch (analysisError) {
         console.error('Analysis error:', analysisError);
-        // Create a basic structured profile as fallback
-        project.structuredProfile = {
-          siteName: project.siteType === 'personal' ? 'Mon Portfolio' : 'Mon Entreprise',
+      }
+
+      if (!structuredProfile) {
+        structuredProfile = {
+          siteName: projectSiteType === 'personal' ? 'Mon Portfolio' : 'Mon Entreprise',
           tagline: 'Site web professionnel',
           description: deepAnswers.slice(0, 200),
           tone: 'moderne',
@@ -114,17 +98,35 @@ export default function Step2() {
           keyHighlights: ['Qualité', 'Professionnalisme', 'Innovation'],
           recommendedCTA: 'Nous contacter',
           colors: ['#3B82F6', '#8B5CF6', '#EF4444'],
-          lang: project.language || 'fr'
+          lang: projectLanguage || 'fr'
         };
-        localStorage.setItem('currentProject', JSON.stringify(project));
       }
 
-      console.log('Navigating to step 3...');
-      navigate(`/new/step3/${projectId}`);
+      // Save structured profile to project
+      project.structuredProfile = structuredProfile;
+      localStorage.setItem('currentProject', JSON.stringify(project));
+
+      const persisted = await persistProjectUpdate(projectId ?? project.id, {
+        deepAnswers,
+        structuredProfile,
+      }, {
+        errorMessage: t('errors.backendSaveFailed', {
+          defaultValue: 'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.'
+        })
+      });
+
+      if (persisted) {
+        console.log('Backend save successful');
+      }
+
+      const nextProjectId = projectId ?? project.id;
+      console.log('Navigating to step 3...', nextProjectId);
+      navigate(`/new/step3/${nextProjectId}`);
     } catch (error) {
       console.error('Error in handleContinue:', error);
       // Force navigation with minimal project
-      navigate(`/new/step3/${projectId}`);
+      const fallbackProjectId = projectId ?? Date.now();
+      navigate(`/new/step3/${fallbackProjectId}`);
     } finally {
       setIsLoading(false);
     }

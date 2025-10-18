@@ -30,7 +30,10 @@ export default function Step3() {
       }
 
       const project = JSON.parse(savedProject);
-      
+      project.siteType = project.siteType ?? project.site_type;
+      project.language = project.language ?? project.lang ?? 'fr';
+      project.id = project.id ?? (projectId ? Number(projectId) : projectId);
+
       if (!project.structuredProfile) {
         // If no structured profile, redirect back to step 2
         navigate(`/new/step2/${projectId}`);

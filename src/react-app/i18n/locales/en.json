@@ -61,6 +61,7 @@
   "errors": {
     "genericError": "An unexpected error occurred",
     "networkError": "Connection error",
-    "validationError": "Invalid data"
+    "validationError": "Invalid data",
+    "backendSaveFailed": "We could not save the project on the server. Your local changes are still available."
   }
 }
