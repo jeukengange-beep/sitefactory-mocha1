@@ -7,6 +7,7 @@ import type { Inspiration, Project } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
 import { persistProjectUpdate } from '@/react-app/utils/projectApi';
+import { apiFetch } from '@/react-app/utils/apiClient';
 
 export default function Step3() {
   const { t } = useTranslation();
@@ -27,7 +28,7 @@ export default function Step3() {
       }
 
       try {
-        const response = await fetch(`/api/projects/by-id/${projectId}`);
+        const response = await apiFetch(`/api/projects/by-id/${projectId}`);
         if (!response.ok) {
           throw new Error('Failed to load project');
         }
@@ -88,7 +89,7 @@ export default function Step3() {
 
   const loadInspirations = async (currentProject: Project) => {
     try {
-      const inspirationsResponse = await fetch('/api/inspirations', {
+      const inspirationsResponse = await apiFetch('/api/inspirations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

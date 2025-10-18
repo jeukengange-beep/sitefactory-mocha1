@@ -62,6 +62,7 @@
     "genericError": "An unexpected error occurred",
     "networkError": "Connection error",
     "validationError": "Invalid data",
-    "backendSaveFailed": "We could not save the project on the server. Your local changes are still available."
+    "backendSaveFailed": "We could not save the project on the server. Your local changes are still available.",
+    "backendUnavailable": "The server is unreachable. We created a local project so you can keep going."
   }
 }

@@ -7,6 +7,7 @@ import type { Project, StructuredProfile } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
 import { persistProjectUpdate } from '@/react-app/utils/projectApi';
+import { apiFetch } from '@/react-app/utils/apiClient';
 
 export default function Step2() {
   const { t } = useTranslation();
@@ -31,7 +32,7 @@ export default function Step2() {
       setError(null);
 
       try {
-        const response = await fetch(`/api/projects/by-id/${projectId}`, {
+        const response = await apiFetch(`/api/projects/by-id/${projectId}`, {
           signal: controller.signal,
         });
 
@@ -108,7 +109,7 @@ export default function Step2() {
 
       if (!structuredProfile) {
         try {
-          const analyzeResponse = await fetch('/api/analyze', {
+          const analyzeResponse = await apiFetch('/api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

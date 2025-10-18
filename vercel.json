@@ -3,7 +3,7 @@
   "outputDirectory": "dist/client",
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/((?!api(?:/|$)).*)",
       "destination": "/index.html"
     }
   ]
