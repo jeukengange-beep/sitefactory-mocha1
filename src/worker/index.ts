@@ -36,25 +36,38 @@ app.post("/api/projects", async (c) => {
     const slug = nanoid(12);
     const now = new Date().toISOString();
     
-    const project = {
-      id: Date.now(), // In production, use proper ID generation
-      slug,
-      site_type: data.siteType,
-      language: data.language,
-      status: 'draft',
-      created_at: now,
-      updated_at: now
-    };
-
     // Insert into database
     const insertSql = `
-      INSERT INTO projects (slug, site_type, language, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO projects (
+        slug,
+        site_type,
+        language,
+        status,
+        created_at,
+        updated_at,
+        deep_answers,
+        structured_profile,
+        selected_inspirations,
+        generated_images
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
-    
-    await c.env.DB.prepare(insertSql)
+
+    const insertResult = await c.env.DB.prepare(insertSql)
       .bind(slug, data.siteType, data.language, 'draft', now, now)
       .run();
+
+    const projectId = insertResult.meta?.last_row_id;
+
+    const project = {
+      id: projectId ?? Date.now(),
+      slug,
+      siteType: data.siteType,
+      language: data.language,
+      status: 'draft' as const,
+      createdAt: now,
+      updatedAt: now,
+    };
 
     return c.json(project);
   } catch (error) {
@@ -72,29 +85,54 @@ app.patch("/api/projects/:id", async (c) => {
     const now = new Date().toISOString();
     
     let updateSql = "UPDATE projects SET updated_at = ?";
-    const params: any[] = [now];
-    
+    const params: (string | null)[] = [now];
+
     if (data.deepAnswers !== undefined) {
       updateSql += ", deep_answers = ?";
-      params.push(data.deepAnswers);
+      params.push(data.deepAnswers ?? null);
     }
     
+    if (data.structuredProfile !== undefined) {
+      updateSql += ", structured_profile = ?";
+      const structuredProfileValue = typeof data.structuredProfile === "string"
+        ? data.structuredProfile
+        : JSON.stringify(data.structuredProfile);
+      params.push(structuredProfileValue);
+    }
+
     if (data.selectedInspirations !== undefined) {
       updateSql += ", selected_inspirations = ?";
-      params.push(JSON.stringify(data.selectedInspirations));
+      params.push(
+        data.selectedInspirations ? JSON.stringify(data.selectedInspirations) : null
+      );
+    }
+
+    if (data.generatedImages !== undefined) {
+      updateSql += ", generated_images = ?";
+      params.push(JSON.stringify(data.generatedImages));
     }
     
     if (data.status !== undefined) {
       updateSql += ", status = ?";
       params.push(data.status);
     }
-    
+
     updateSql += " WHERE id = ?";
     params.push(projectId);
-    
+
     await c.env.DB.prepare(updateSql).bind(...params).run();
-    
-    return c.json({ success: true });
+
+    const updatedRow = await c.env.DB.prepare(
+      "SELECT * FROM projects WHERE id = ?"
+    )
+      .bind(projectId)
+      .first<DbProjectRow>();
+
+    if (!updatedRow) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    return c.json(mapProjectFromRow(updatedRow));
   } catch (error) {
     console.error('Error updating project:', error);
     return c.json({ error: 'Failed to update project' }, 500);
@@ -104,26 +142,52 @@ app.patch("/api/projects/:id", async (c) => {
 app.get("/api/projects/:slug", async (c) => {
   try {
     const slug = c.req.param("slug");
-    
+
     const result = await c.env.DB.prepare(
       "SELECT * FROM projects WHERE slug = ?"
     ).bind(slug).first();
-    
+
     if (!result) {
       return c.json({ error: 'Project not found' }, 404);
     }
-    
-    // Parse JSON fields
+
+    // Parse JSON fields and normalize casing
     const project = {
-      ...result,
-      structuredProfile: result.structured_profile ? JSON.parse(result.structured_profile as string) : null,
-      selectedInspirations: result.selected_inspirations ? JSON.parse(result.selected_inspirations as string) : null,
-      generatedImages: result.generated_images ? JSON.parse(result.generated_images as string) : null,
+      id: result.id,
+      slug: result.slug,
+      siteType: result.site_type,
+      deepAnswers: result.deep_answers ?? undefined,
+      structuredProfile: result.structured_profile ? JSON.parse(result.structured_profile as string) : undefined,
+      selectedInspirations: result.selected_inspirations ? JSON.parse(result.selected_inspirations as string) : undefined,
+      generatedImages: result.generated_images ? JSON.parse(result.generated_images as string) : undefined,
+      language: result.language,
+      status: result.status,
+      createdAt: result.created_at,
+      updatedAt: result.updated_at,
     };
-    
+
     return c.json(project);
   } catch (error) {
     console.error('Error fetching project:', error);
+    return c.json({ error: 'Failed to fetch project' }, 500);
+  }
+});
+
+app.get("/api/projects/by-id/:id", async (c) => {
+  try {
+    const projectId = c.req.param("id");
+
+    const result = await c.env.DB.prepare(
+      "SELECT * FROM projects WHERE id = ?"
+    ).bind(projectId).first<DbProjectRow>();
+
+    if (!result) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    return c.json(mapProjectFromRow(result));
+  } catch (error) {
+    console.error('Error fetching project by id:', error);
     return c.json({ error: 'Failed to fetch project' }, 500);
   }
 });
@@ -521,10 +585,23 @@ function generateFallbackInspirations(profile: StructuredProfile, count: number)
 }
 
 // Helper function to select inspirations from database
-async function selectInspirationsFromDatabase(db: any, profile: any): Promise<Inspiration[]> {
+type InspirationRow = {
+  id: number;
+  title: string;
+  domain: string;
+  image_url: string;
+  style?: string | null;
+  description?: string | null;
+  features?: string | null;
+};
+
+async function selectInspirationsFromDatabase(
+  db: D1Database,
+  profile: StructuredProfile
+): Promise<Inspiration[]> {
   try {
     // Analyze profile to determine best matching inspirations
-    const isPersonal = profile.siteName?.toLowerCase().includes('portfolio') || 
+    const isPersonal = profile.siteName?.toLowerCase().includes('portfolio') ||
                       profile.tone?.includes('personal') ||
                       profile.primaryGoal?.toLowerCase().includes('portfolio');
     
@@ -571,7 +648,7 @@ async function selectInspirationsFromDatabase(db: any, profile: any): Promise<In
     
     // Build query based on analysis
     let sql = `SELECT * FROM inspirations WHERE is_active = TRUE AND category = ?`;
-    const params: any[] = [category];
+    const params: string[] = [category];
     
     if (industry) {
       sql += ` AND industry = ?`;
@@ -585,24 +662,26 @@ async function selectInspirationsFromDatabase(db: any, profile: any): Promise<In
     
     sql += ` ORDER BY RANDOM() LIMIT 5`;
     
-    const result = await db.prepare(sql).bind(...params).all();
-    
-    // If we don't have enough specific matches, get some general ones
-    if (result.results.length < 3) {
+    const result = await db.prepare<InspirationRow>(sql).bind(...params).all();
+    let rows = result.results ?? [];
+
+    if (rows.length < 3) {
       const generalSql = `SELECT * FROM inspirations WHERE is_active = TRUE AND category = ? ORDER BY RANDOM() LIMIT 5`;
-      const generalResult = await db.prepare(generalSql).bind(category).all();
-      result.results = generalResult.results;
+      const generalResult = await db
+        .prepare<InspirationRow>(generalSql)
+        .bind(category)
+        .all();
+      rows = generalResult.results ?? rows;
     }
-    
-    // Transform database results to Inspiration format
-    const inspirations: Inspiration[] = result.results.map((row: any) => ({
+
+    const inspirations: Inspiration[] = rows.map((row) => ({
       id: `db_${row.id}`,
       title: row.title,
       domain: row.domain,
       image: row.image_url,
       justification: generateJustification(row, profile)
     }));
-    
+
     return inspirations;
   } catch (error) {
     console.error('Error selecting inspirations from database:', error);
@@ -610,7 +689,10 @@ async function selectInspirationsFromDatabase(db: any, profile: any): Promise<In
   }
 }
 
-function generateJustification(inspiration: any, profile: any): string {
+function generateJustification(
+  inspiration: InspirationRow,
+  profile: StructuredProfile
+): string {
   const lang = profile.lang || 'fr';
   
   if (lang === 'fr') {

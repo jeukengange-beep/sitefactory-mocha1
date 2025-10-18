@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'framer-motion';
-import { ArrowRight, ArrowLeft, Check, ExternalLink } from 'lucide-react';
-import { Inspiration } from '@/shared/types';
+import { ArrowLeft, ArrowRight, Check, ExternalLink } from 'lucide-react';
+import { Inspiration, Project } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
 
@@ -15,99 +15,121 @@ export default function Step3() {
   const [selectedInspirations, setSelectedInspirations] = useState<Inspiration[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingInspirations, setIsLoadingInspirations] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadInspirations();
-  }, []);
-
-  const loadInspirations = async () => {
-    setIsLoadingInspirations(true);
-    try {
-      const savedProject = localStorage.getItem('currentProject');
-      if (!savedProject) {
+    const fetchProject = async () => {
+      if (!projectId) {
         navigate('/new/step1');
         return;
       }
 
       const project = JSON.parse(savedProject);
-      
+      project.siteType = project.siteType ?? project.site_type;
+      project.language = project.language ?? project.lang ?? 'fr';
+      project.id = project.id ?? (projectId ? Number(projectId) : projectId);
+
       if (!project.structuredProfile) {
         // If no structured profile, redirect back to step 2
         navigate(`/new/step2/${projectId}`);
         return;
       }
 
-      // Generate AI-powered inspirations
       try {
-        const inspirationsResponse = await fetch('/api/inspirations', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            structuredProfile: project.structuredProfile
-          })
-        });
-
-        if (inspirationsResponse.ok) {
-          const aiInspirations = await inspirationsResponse.json();
-          setInspirations(aiInspirations);
-        } else {
-          throw new Error('Failed to fetch AI inspirations');
+        const response = await fetch(`/api/projects/by-id/${projectId}`);
+        if (!response.ok) {
+          throw new Error('Failed to load project');
         }
-      } catch (error) {
-        console.error('Error fetching AI inspirations, using fallback:', error);
-        
-        // Fallback inspirations based on project type and profile
-        const isPersonal = project.siteType === 'personal';
-        const profile = project.structuredProfile;
-        
-        const fallbackInspirations: Inspiration[] = [
-          {
-            id: '1',
-            title: isPersonal ? 'Portfolio Créatif' : 'Agence Moderne',
-            domain: isPersonal ? 'portfoliocreative.design' : 'agencemoderne.co',
-            image: 'https://images.unsplash.com/photo-1558618667-fcc251c78b5e?w=400&h=300&fit=crop',
-            justification: `Design ${profile?.tone || 'moderne'} qui correspond à votre vision ${profile?.ambience || 'professionnelle'}`
-          },
-          {
-            id: '2',
-            title: isPersonal ? 'Showcase Artistique' : 'Services Pro',
-            domain: isPersonal ? 'showcaseartistique.fr' : 'servicespro.io',
-            image: 'https://images.unsplash.com/photo-1542744173-8e7e53415bb0?w=400&h=300&fit=crop',
-            justification: profile?.lang === 'fr' 
-              ? `Excellent exemple pour ${profile?.primaryGoal || 'présenter votre activité'}`
-              : `Excellent example for ${profile?.primaryGoal || 'showcasing your business'}`
-          },
-          {
-            id: '3',
-            title: profile?.siteName || 'Site Inspiration',
-            domain: 'inspiration-design.com',
-            image: 'https://images.unsplash.com/photo-1586717791821-3f44a563fa4c?w=400&h=300&fit=crop',
-            justification: `Interface adaptée à votre secteur avec ${profile?.recommendedCTA || 'call-to-action efficace'}`
-          },
-          {
-            id: '4',
-            title: isPersonal ? 'Portfolio Elite' : 'Business Hub',
-            domain: isPersonal ? 'portfolioelite.design' : 'businesshub.co',
-            image: 'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=400&h=300&fit=crop',
-            justification: profile?.keyHighlights?.[0] || 'Design professionnel et impactant'
-          },
-          {
-            id: '5',
-            title: 'Studio Créatif',
-            domain: 'studiocreatif.fr',
-            image: 'https://images.unsplash.com/photo-1574169208507-84376144848b?w=400&h=300&fit=crop',
-            justification: profile?.keyHighlights?.[1] || 'Approche authentique et personnalisée'
-          }
-        ];
-        
-        setInspirations(fallbackInspirations);
+
+        const projectData: Project = await response.json();
+
+        if (!projectData.structuredProfile) {
+          navigate(`/new/step2/${projectId}`);
+          return;
+        }
+
+        setSelectedInspirations(projectData.selectedInspirations ?? []);
+
+        await loadInspirations(projectData);
+      } catch (err) {
+        console.error('Error loading project for inspirations:', err);
+        setInspirations([]);
+        setError(
+          t('step3.loadError', {
+            defaultValue: 'Impossible de charger le projet ou les inspirations.'
+          })
+        );
+      } finally {
+        setIsLoadingInspirations(false);
       }
+    };
+
+    fetchProject();
+  }, [navigate, projectId, t]);
+
+  const loadInspirations = async (currentProject: Project) => {
+    try {
+      const inspirationsResponse = await fetch('/api/inspirations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          structuredProfile: currentProject.structuredProfile
+        })
+      });
+
+      if (!inspirationsResponse.ok) {
+        throw new Error('Failed to fetch AI inspirations');
+      }
+
+      const aiInspirations: Inspiration[] = await inspirationsResponse.json();
+      setInspirations(aiInspirations);
     } catch (error) {
-      console.error('Error loading inspirations:', error);
-      // Set minimal fallback
-      setInspirations([]);
-    } finally {
-      setIsLoadingInspirations(false);
+      console.error('Error fetching AI inspirations, using fallback:', error);
+
+      const profile = currentProject.structuredProfile;
+      const isPersonal = currentProject.siteType === 'personal';
+
+      const fallbackInspirations: Inspiration[] = [
+        {
+          id: '1',
+          title: isPersonal ? 'Portfolio Créatif' : 'Agence Moderne',
+          domain: isPersonal ? 'portfoliocreative.design' : 'agencemoderne.co',
+          image: 'https://images.unsplash.com/photo-1558618667-fcc251c78b5e?w=400&h=300&fit=crop',
+          justification: `Design ${profile?.tone || 'moderne'} qui correspond à votre vision ${profile?.ambience || 'professionnelle'}`
+        },
+        {
+          id: '2',
+          title: isPersonal ? 'Showcase Artistique' : 'Services Pro',
+          domain: isPersonal ? 'showcaseartistique.fr' : 'servicespro.io',
+          image: 'https://images.unsplash.com/photo-1542744173-8e7e53415bb0?w=400&h=300&fit=crop',
+          justification: profile?.lang === 'fr'
+            ? `Excellent exemple pour ${profile?.primaryGoal || 'présenter votre activité'}`
+            : `Excellent example for ${profile?.primaryGoal || 'showcasing your business'}`
+        },
+        {
+          id: '3',
+          title: profile?.siteName || 'Site Inspiration',
+          domain: 'inspiration-design.com',
+          image: 'https://images.unsplash.com/photo-1586717791821-3f44a563fa4c?w=400&h=300&fit=crop',
+          justification: `Interface adaptée à votre secteur avec ${profile?.recommendedCTA || 'call-to-action efficace'}`
+        },
+        {
+          id: '4',
+          title: isPersonal ? 'Portfolio Elite' : 'Business Hub',
+          domain: isPersonal ? 'portfolioelite.design' : 'businesshub.co',
+          image: 'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=400&h=300&fit=crop',
+          justification: profile?.keyHighlights?.[0] || 'Design professionnel et impactant'
+        },
+        {
+          id: '5',
+          title: 'Studio Créatif',
+          domain: 'studiocreatif.fr',
+          image: 'https://images.unsplash.com/photo-1574169208507-84376144848b?w=400&h=300&fit=crop',
+          justification: profile?.keyHighlights?.[1] || 'Approche authentique et personnalisée'
+        }
+      ];
+
+      setInspirations(fallbackInspirations);
     }
   };
 
@@ -124,30 +146,32 @@ export default function Step3() {
   };
 
   const handleContinue = async () => {
-    setIsLoading(true);
-    try {
-      // Save to localStorage
-      const savedProject = localStorage.getItem('currentProject');
-      if (savedProject) {
-        const project = JSON.parse(savedProject);
-        project.selectedInspirations = selectedInspirations;
-        localStorage.setItem('currentProject', JSON.stringify(project));
-      }
+    if (!projectId) {
+      return;
+    }
 
-      // Try to save to backend
-      try {
-        await fetch(`/api/projects/${projectId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ selectedInspirations })
-        });
-      } catch (error) {
-        console.log('Backend save failed, continuing with localStorage');
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedInspirations })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save inspirations');
       }
 
       navigate(`/new/step4/${projectId}`);
-    } catch (error) {
-      console.error('Error saving inspirations:', error);
+    } catch (err) {
+      console.error('Error saving inspirations:', err);
+      setError(
+        t('step3.saveError', {
+          defaultValue: 'Impossible d\'enregistrer vos inspirations. Veuillez réessayer.'
+        })
+      );
     } finally {
       setIsLoading(false);
     }
@@ -185,7 +209,7 @@ export default function Step3() {
         >
           Site-Factory
         </motion.h1>
-        
+
         <motion.div
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
@@ -205,74 +229,63 @@ export default function Step3() {
           <h2 className="text-4xl lg:text-5xl font-bold text-gray-900 mb-4">
             {t('step3.title')}
           </h2>
-          <p className="text-xl text-gray-600 max-w-2xl mx-auto mb-4">
+          <p className="text-xl text-gray-600 max-w-2xl mx-auto">
             {t('step3.subtitle')}
           </p>
-          <p className="text-sm text-blue-600 font-medium">
-            {t('step3.selectMax')} ({selectedInspirations.length}/2)
-          </p>
+          {error && (
+            <p className="mt-4 text-sm text-red-500">
+              {error}
+            </p>
+          )}
         </motion.div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
-          {inspirations.map((inspiration, index) => {
-            const isSelected = selectedInspirations.find(i => i.id === inspiration.id);
-            const canSelect = selectedInspirations.length < 2 || isSelected;
-            
+          {inspirations.map(inspiration => {
+            const isSelected = selectedInspirations.some(i => i.id === inspiration.id);
             return (
               <motion.div
                 key={inspiration.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.1 }}
-                onClick={() => canSelect && handleInspirationSelect(inspiration)}
-                className={`relative cursor-pointer group ${
-                  !canSelect ? 'opacity-50 cursor-not-allowed' : ''
-                } ${
-                  isSelected ? 'ring-4 ring-blue-500 ring-opacity-50' : ''
+                transition={{ duration: 0.3 }}
+                onClick={() => handleInspirationSelect(inspiration)}
+                className={`group relative cursor-pointer bg-white/80 backdrop-blur-sm rounded-3xl border border-white/60 shadow-lg overflow-hidden transition-all duration-300 ${
+                  isSelected ? 'ring-4 ring-blue-500 ring-opacity-50 shadow-xl shadow-blue-500/20' : 'hover:shadow-xl hover:-translate-y-1'
                 }`}
               >
-                <div className={`bg-white rounded-2xl overflow-hidden border-2 transition-all duration-300 ${
-                  isSelected
-                    ? 'border-blue-500 shadow-xl shadow-blue-500/20'
-                    : 'border-gray-200 hover:border-blue-300 hover:shadow-lg'
-                }`}>
-                  <div className="relative overflow-hidden">
-                    <img
-                      src={inspiration.image}
-                      alt={inspiration.title}
-                      className="w-full h-48 object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                    
-                    {isSelected && (
-                      <motion.div
-                        initial={{ scale: 0 }}
-                        animate={{ scale: 1 }}
-                        className="absolute top-3 right-3 w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center"
-                      >
-                        <Check className="w-4 h-4 text-white" />
-                      </motion.div>
-                    )}
-                  </div>
-                  
-                  <div className="p-6">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="font-bold text-gray-900">{inspiration.title}</h3>
-                      <ExternalLink className="w-4 h-4 text-gray-400" />
-                    </div>
-                    
-                    <p className="text-sm text-blue-600 mb-3 font-medium">
-                      {inspiration.domain}
-                    </p>
-                    
-                    <div className="bg-gray-50 rounded-lg p-3">
-                      <p className="text-xs text-gray-600 mb-1 font-medium">
-                        {t('step3.justification')}
-                      </p>
-                      <p className="text-sm text-gray-800">
-                        {inspiration.justification}
+                <div className="aspect-[4/3] overflow-hidden">
+                  <img
+                    src={inspiration.image}
+                    alt={inspiration.title}
+                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                  />
+                  {isSelected && (
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      className="absolute top-4 right-4 w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-lg"
+                    >
+                      <Check className="w-5 h-5" />
+                    </motion.div>
+                  )}
+                </div>
+
+                <div className="p-6">
+                  <div className="flex items-start justify-between gap-4 mb-4">
+                    <div>
+                      <h3 className="text-xl font-semibold text-gray-900 mb-1">
+                        {inspiration.title}
+                      </h3>
+                      <p className="text-sm text-blue-600 flex items-center gap-2">
+                        <ExternalLink className="w-4 h-4" />
+                        {inspiration.domain}
                       </p>
                     </div>
                   </div>
+
+                  <p className="text-gray-600 leading-relaxed">
+                    {inspiration.justification}
+                  </p>
                 </div>
               </motion.div>
             );
@@ -282,7 +295,7 @@ export default function Step3() {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ delay: 0.6 }}
+          transition={{ delay: 0.2 }}
           className="flex justify-between items-center"
         >
           <motion.button
@@ -297,14 +310,14 @@ export default function Step3() {
 
           <motion.button
             onClick={handleContinue}
-            disabled={isLoading}
+            disabled={selectedInspirations.length === 0 || isLoading}
             className={`flex items-center gap-3 px-8 py-4 rounded-2xl font-semibold text-lg transition-all duration-300 ${
-              !isLoading
+              selectedInspirations.length > 0 && !isLoading
                 ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/30 hover:scale-105'
                 : 'bg-gray-200 text-gray-400 cursor-not-allowed'
             }`}
-            whileHover={!isLoading ? { y: -2 } : {}}
-            whileTap={!isLoading ? { scale: 0.95 } : {}}
+            whileHover={selectedInspirations.length > 0 && !isLoading ? { y: -2 } : {}}
+            whileTap={selectedInspirations.length > 0 && !isLoading ? { scale: 0.95 } : {}}
           >
             {isLoading ? (
               <>
@@ -323,3 +336,4 @@ export default function Step3() {
     </div>
   );
 }
+
