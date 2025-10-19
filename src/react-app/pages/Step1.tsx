@@ -3,9 +3,10 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { motion } from 'framer-motion';
 import { User, Building2, ArrowRight } from 'lucide-react';
-import { SiteType } from '@/shared/types';
+import { SiteType, type StoredProject } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
+import { apiFetch } from '@/react-app/utils/apiClient';
 
 export default function Step1() {
   const { t, i18n } = useTranslation();
@@ -39,7 +40,7 @@ export default function Step1() {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/projects', {
+      const response = await apiFetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -50,13 +51,14 @@ export default function Step1() {
 
       if (!response.ok) throw new Error('Failed to create project');
 
-      const project = await response.json();
+      const project: StoredProject = await response.json();
       navigate(`/new/step2/${project.id}`);
     } catch (error) {
       console.error('Error creating project:', error);
       setError(
-        t('step1.error', {
-          defaultValue: 'Nous n\'avons pas pu créer votre projet. Veuillez réessayer.'
+        t('errors.backendUnavailable', {
+          defaultValue:
+            'Le serveur est momentanément indisponible. Veuillez réessayer.',
         })
       );
     } finally {
