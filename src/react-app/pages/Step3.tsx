@@ -3,14 +3,17 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'framer-motion';
 import { ArrowLeft, ArrowRight, Check, ExternalLink } from 'lucide-react';
-import { Inspiration, Project } from '@/shared/types';
+import type { Inspiration, StoredProject } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
+import { persistProjectUpdate } from '@/react-app/utils/projectApi';
+import { apiFetch } from '@/react-app/utils/apiClient';
 
 export default function Step3() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { projectId } = useParams();
+  const [project, setProject] = useState<StoredProject | null>(null);
   const [inspirations, setInspirations] = useState<Inspiration[]>([]);
   const [selectedInspirations, setSelectedInspirations] = useState<Inspiration[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -24,41 +27,62 @@ export default function Step3() {
         return;
       }
 
-      const project = JSON.parse(savedProject);
-      project.siteType = project.siteType ?? project.site_type;
-      project.language = project.language ?? project.lang ?? 'fr';
-      project.id = project.id ?? (projectId ? Number(projectId) : projectId);
-
-      if (!project.structuredProfile) {
-        // If no structured profile, redirect back to step 2
-        navigate(`/new/step2/${projectId}`);
-        return;
-      }
-
       try {
-        const response = await fetch(`/api/projects/by-id/${projectId}`);
+        const response = await apiFetch(`/api/projects/by-id/${projectId}`);
         if (!response.ok) {
           throw new Error('Failed to load project');
         }
 
-        const projectData: Project = await response.json();
+        const projectData: StoredProject = await response.json();
+        projectData.isLocalDraft = false;
 
         if (!projectData.structuredProfile) {
           navigate(`/new/step2/${projectId}`);
           return;
         }
 
+        setProject(projectData);
+        localStorage.setItem('currentProject', JSON.stringify(projectData));
         setSelectedInspirations(projectData.selectedInspirations ?? []);
 
         await loadInspirations(projectData);
       } catch (err) {
         console.error('Error loading project for inspirations:', err);
-        setInspirations([]);
-        setError(
-          t('step3.loadError', {
-            defaultValue: 'Impossible de charger le projet ou les inspirations.'
-          })
-        );
+        const savedProject = localStorage.getItem('currentProject');
+
+        if (savedProject) {
+          try {
+            const localProject = JSON.parse(savedProject) as StoredProject;
+            if (!localProject.id && projectId) {
+              localProject.id = Number(projectId);
+            }
+
+            localProject.isLocalDraft =
+              localProject.isLocalDraft ?? localProject.slug.startsWith('local-');
+
+            if (!localProject.structuredProfile) {
+              navigate(`/new/step2/${projectId}`);
+              return;
+            }
+
+            setProject(localProject);
+            setSelectedInspirations(localProject.selectedInspirations ?? []);
+            await loadInspirations(localProject);
+          } catch (parseError) {
+            console.error('Unable to use local project for inspirations:', parseError);
+            setError(
+              t('step3.loadError', {
+                defaultValue: 'Impossible de charger le projet ou les inspirations.',
+              })
+            );
+          }
+        } else {
+          setError(
+            t('step3.loadError', {
+              defaultValue: 'Impossible de charger le projet ou les inspirations.',
+            })
+          );
+        }
       } finally {
         setIsLoadingInspirations(false);
       }
@@ -67,9 +91,9 @@ export default function Step3() {
     fetchProject();
   }, [navigate, projectId, t]);
 
-  const loadInspirations = async (currentProject: Project) => {
+  const loadInspirations = async (currentProject: StoredProject) => {
     try {
-      const inspirationsResponse = await fetch('/api/inspirations', {
+      const inspirationsResponse = await apiFetch('/api/inspirations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -146,7 +170,7 @@ export default function Step3() {
   };
 
   const handleContinue = async () => {
-    if (!projectId) {
+    if (!projectId || !project) {
       return;
     }
 
@@ -154,14 +178,28 @@ export default function Step3() {
     setError(null);
 
     try {
-      const response = await fetch(`/api/projects/${projectId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selectedInspirations })
-      });
+      const updatedProject: StoredProject = {
+        ...project,
+        selectedInspirations,
+      };
 
-      if (!response.ok) {
-        throw new Error('Failed to save inspirations');
+      localStorage.setItem('currentProject', JSON.stringify(updatedProject));
+      setProject(updatedProject);
+
+      const isLocalDraft =
+        updatedProject.isLocalDraft ?? updatedProject.slug.startsWith('local-');
+
+      if (!isLocalDraft) {
+        await persistProjectUpdate(
+          projectId,
+          { selectedInspirations },
+          {
+            errorMessage: t('errors.backendSaveFailed', {
+              defaultValue:
+                'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.',
+            }),
+          }
+        );
       }
 
       navigate(`/new/step4/${projectId}`);
