@@ -56,40 +56,15 @@ export default function Step1() {
       if (!response.ok) throw new Error('Failed to create project');
 
       const project: StoredProject = await response.json();
-      project.isLocalDraft = false;
-      localStorage.setItem('currentProject', JSON.stringify(project));
       navigate(`/new/step2/${project.id}`);
     } catch (error) {
       console.error('Error creating project:', error);
-      const fallbackId = Date.now();
-      const fallbackProject: StoredProject = {
-        id: fallbackId,
-        slug: `local-${fallbackId}`,
-        siteType: selectedType,
-        language: fallbackLanguage,
-        status: 'draft',
-        deepAnswers: null,
-        structuredProfile: null,
-        selectedInspirations: null,
-        generatedImages: null,
-        createdAt: now,
-        updatedAt: now,
-        isLocalDraft: true
-      };
-
-      localStorage.setItem('currentProject', JSON.stringify(fallbackProject));
-
-      const offlineMessage = t('errors.backendUnavailable', {
-        defaultValue:
-          "Le serveur est momentanément indisponible. Nous continuons avec un projet sauvegardé localement.",
-      });
-      setError(offlineMessage);
-
-      if (typeof window !== 'undefined') {
-        alert(offlineMessage);
-      }
-
-      navigate(`/new/step2/${fallbackProject.id}`);
+      setError(
+        t('errors.backendUnavailable', {
+          defaultValue:
+            'Le serveur est momentanément indisponible. Veuillez réessayer.',
+        })
+      );
     } finally {
       setIsLoading(false);
     }

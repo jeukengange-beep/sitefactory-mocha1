@@ -40,6 +40,7 @@
     "placeholder": "Describe your activity, goals, preferred style, colors, target audience, what makes you unique...\n\nExample: I'm a photographer specializing in weddings. I want an elegant and romantic website with pastel tones. My goal is to attract future brides and showcase my portfolio. I love minimalist designs with lots of white space.",
     "minLength": "Minimum 50 characters required",
     "loadError": "We couldn't load your project. Please start over.",
+    "analysisError": "We couldn't analyze your project right now. Please try again.",
     "saveError": "We couldn't save your answers. Please try again."
   },
   "step3": {
@@ -55,7 +56,7 @@
     "title": "Your previews are ready!",
     "subtitle": "Here are the visual previews of your future website",
     "loadError": "We couldn't retrieve your project. Please start over.",
-    "generationError": "We couldn't generate images automatically. We've selected relevant visuals instead.",
+    "generationError": "We couldn't generate images automatically. Please try again later.",
     "overview": "Overview",
     "sections": "Sections",
     "sectionPreview": "Section preview",
@@ -74,7 +75,7 @@
     "genericError": "An unexpected error occurred",
     "networkError": "Connection error",
     "validationError": "Invalid data",
-    "backendSaveFailed": "We could not save the project on the server. Your local changes are still available.",
-    "backendUnavailable": "The server is unreachable. We created a local project so you can keep going."
+    "backendSaveFailed": "We couldn't save the project on the server. Please try again.",
+    "backendUnavailable": "The server is unreachable. Please try again."
   }
 }

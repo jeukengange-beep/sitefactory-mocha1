@@ -6,52 +6,11 @@ import { Download, Share2, MessageCircle, ArrowLeft, Eye } from 'lucide-react';
 import type {
   GeneratedImage,
   StoredProject,
-  StructuredProfile,
 } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
 import { persistProjectUpdate } from '@/react-app/utils/projectApi';
 import { apiFetch } from '@/react-app/utils/apiClient';
-
-const overviewFallbackImage = 'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=1200&h=900&fit=crop&auto=format&q=80';
-const contextualFallbackImages = [
-  'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=1200&h=900&fit=crop&auto=format&q=80',
-  'https://images.unsplash.com/photo-1521737604893-d14cc237f11d?w=1200&h=900&fit=crop&auto=format&q=80',
-  'https://images.unsplash.com/photo-1483478550801-ceba5fe50e8e?w=1200&h=900&fit=crop&auto=format&q=80',
-  'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=1200&h=900&fit=crop&auto=format&q=80',
-  'https://images.unsplash.com/photo-1574169208507-84376144848b?w=1200&h=900&fit=crop&auto=format&q=80',
-];
-
-const fallbackSectionIds = ['hero', 'about', 'services', 'work', 'testimonials', 'contact'] as const;
-
-function buildFallbackImages(profile: StructuredProfile | null): GeneratedImage[] {
-  const sections = profile?.sections && profile.sections.length > 0
-    ? profile.sections
-    : fallbackSectionIds.map((id) => ({ id }));
-
-  const fallbackImages: GeneratedImage[] = [
-    {
-      id: 'overview',
-      type: 'overview',
-      url: overviewFallbackImage,
-      filename: 'site-overview.png',
-    },
-  ];
-
-  sections.forEach((section, index) => {
-    const sectionId = typeof section.id === 'string' ? section.id : `section-${index}`;
-
-    fallbackImages.push({
-      id: sectionId,
-      type: 'section',
-      sectionId,
-      url: contextualFallbackImages[index % contextualFallbackImages.length],
-      filename: `${sectionId}-section.png`,
-    });
-  });
-
-  return fallbackImages;
-}
 
 export default function Step4() {
   const { t } = useTranslation();
@@ -71,7 +30,7 @@ export default function Step4() {
     setIsLoading(true);
     setError(null);
 
-    let currentProject: StoredProject | null = null;
+    let projectData: StoredProject;
 
     try {
       const response = await apiFetch(`/api/projects/by-id/${projectId}`);
@@ -80,52 +39,23 @@ export default function Step4() {
         throw new Error(`Failed to load project (status ${response.status})`);
       }
 
-      const remoteProject = (await response.json()) as StoredProject;
-      remoteProject.isLocalDraft = false;
-      currentProject = remoteProject;
-      localStorage.setItem('currentProject', JSON.stringify(remoteProject));
+      projectData = (await response.json()) as StoredProject;
     } catch (fetchError) {
       console.error('Error loading project for step 4:', fetchError);
-
-      const savedProject = localStorage.getItem('currentProject');
-      if (savedProject) {
-        try {
-          const localProject = JSON.parse(savedProject) as StoredProject;
-          if (!localProject.id) {
-            localProject.id = Number(projectId);
-          }
-
-          localProject.isLocalDraft =
-            localProject.isLocalDraft ?? localProject.slug.startsWith('local-');
-
-          currentProject = localProject;
-        } catch (parseError) {
-          console.error('Unable to parse project from localStorage:', parseError);
-        }
-      }
-
-      if (!currentProject) {
-        setError(
-          t('step4.loadError', {
-            defaultValue: 'Impossible de récupérer votre projet. Veuillez recommencer.',
-          })
-        );
-        setIsLoading(false);
-        return;
-      }
-    }
-
-    if (!currentProject) {
+      setError(
+        t('step4.loadError', {
+          defaultValue: 'Impossible de récupérer votre projet. Veuillez recommencer.',
+        })
+      );
       setIsLoading(false);
       return;
     }
-
-    const projectData: StoredProject = currentProject;
 
     setProjectSlug(projectData.slug);
 
     if (!projectData.structuredProfile) {
       navigate(`/new/step2/${projectId}`);
+      setIsLoading(false);
       return;
     }
 
@@ -152,74 +82,28 @@ export default function Step4() {
       const aiGeneratedImages: GeneratedImage[] = await generateResponse.json();
       setGeneratedImages(aiGeneratedImages);
 
-      const completedProject: StoredProject = {
-        ...projectData,
-        generatedImages: aiGeneratedImages,
-        status: 'completed',
-        updatedAt: new Date().toISOString(),
-      };
-
-      localStorage.setItem('currentProject', JSON.stringify(completedProject));
-
-      const isLocalDraft =
-        completedProject.isLocalDraft ??
-        completedProject.slug.startsWith('local-');
-
-      if (!isLocalDraft) {
-        await persistProjectUpdate(
-          projectId,
-          {
-            generatedImages: aiGeneratedImages,
-            status: 'completed',
-          },
-          {
-            errorMessage: t('errors.backendSaveFailed', {
-              defaultValue:
-                'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.',
-            }),
-          }
+      try {
+        await persistProjectUpdate(projectId, {
+          generatedImages: aiGeneratedImages,
+          status: 'completed',
+        });
+      } catch (persistError) {
+        console.error('Error saving generated images:', persistError);
+        setError(
+          t('errors.backendSaveFailed', {
+            defaultValue: 'Impossible de sauvegarder le projet côté serveur. Veuillez réessayer.',
+          })
         );
+        return;
       }
     } catch (generationError) {
-      console.error('Error generating AI images, using fallback:', generationError);
+      console.error('Error generating AI images:', generationError);
       setError(
         t('step4.generationError', {
           defaultValue:
-            "Impossible de générer automatiquement les images. Nous avons sélectionné des visuels adaptés.",
+            'Impossible de générer automatiquement les images. Veuillez réessayer plus tard.',
         })
       );
-
-      const fallbackImages = buildFallbackImages(projectData.structuredProfile);
-      setGeneratedImages(fallbackImages);
-
-      const completedProject: StoredProject = {
-        ...projectData,
-        generatedImages: fallbackImages,
-        status: 'completed',
-        updatedAt: new Date().toISOString(),
-      };
-
-      localStorage.setItem('currentProject', JSON.stringify(completedProject));
-
-      const isLocalDraft =
-        completedProject.isLocalDraft ??
-        completedProject.slug.startsWith('local-');
-
-      if (!isLocalDraft) {
-        await persistProjectUpdate(
-          projectId,
-          {
-            generatedImages: fallbackImages,
-            status: 'completed',
-          },
-          {
-            errorMessage: t('errors.backendSaveFailed', {
-              defaultValue:
-                'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.',
-            }),
-          }
-        );
-      }
     } finally {
       setIsLoading(false);
     }

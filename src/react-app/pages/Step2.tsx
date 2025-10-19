@@ -41,42 +41,15 @@ export default function Step2() {
         }
 
         const projectData: StoredProject = await response.json();
-        projectData.isLocalDraft = false;
-
         setProject(projectData);
         setDeepAnswers(projectData.deepAnswers ?? '');
-        localStorage.setItem('currentProject', JSON.stringify(projectData));
       } catch (fetchError) {
         console.error('Error loading project for step 2:', fetchError);
-
-        const savedProject = localStorage.getItem('currentProject');
-        if (savedProject) {
-          try {
-          const localProject = JSON.parse(savedProject) as StoredProject;
-          if (!localProject.id && projectId) {
-            localProject.id = Number(projectId);
-          }
-
-          localProject.isLocalDraft =
-            localProject.isLocalDraft ?? localProject.slug.startsWith('local-');
-
-          setProject(localProject);
-          setDeepAnswers(localProject.deepAnswers ?? '');
-          } catch (parseError) {
-            console.error('Unable to parse project from localStorage:', parseError);
-            setError(
-              t('step2.loadError', {
-                defaultValue: 'Impossible de charger votre projet. Veuillez recommencer.',
-              })
-            );
-          }
-        } else {
-          setError(
-            t('step2.loadError', {
-              defaultValue: 'Impossible de charger votre projet. Veuillez recommencer.',
-            })
-          );
-        }
+        setError(
+          t('step2.loadError', {
+            defaultValue: 'Impossible de charger votre projet. Veuillez recommencer.',
+          })
+        );
       } finally {
         setIsFetching(false);
       }
@@ -102,14 +75,7 @@ export default function Step2() {
       const projectSiteType = project.siteType;
       const projectLanguage = project.language;
 
-      const updatedProject: StoredProject = {
-        ...project,
-        deepAnswers,
-      };
-
-      localStorage.setItem('currentProject', JSON.stringify(updatedProject));
-
-    let structuredProfile: StructuredProfile | null = project.structuredProfile;
+      let structuredProfile: StructuredProfile | null = project.structuredProfile;
 
       if (!structuredProfile) {
         try {
@@ -123,55 +89,42 @@ export default function Step2() {
             }),
           });
 
-          if (analyzeResponse.ok) {
-            structuredProfile = await analyzeResponse.json();
+          if (!analyzeResponse.ok) {
+            throw new Error('Failed to analyze project');
           }
+
+          structuredProfile = await analyzeResponse.json();
         } catch (analysisError) {
           console.error('Analysis error:', analysisError);
+          setError(
+            t('step2.analysisError', {
+              defaultValue:
+                'Impossible d’analyser votre projet pour le moment. Veuillez réessayer.',
+            })
+          );
+          return;
         }
       }
 
       if (!structuredProfile) {
-        structuredProfile = {
-          siteName: projectSiteType === 'personal' ? 'Mon Portfolio' : 'Mon Entreprise',
-          tagline: 'Site web professionnel',
-          description: deepAnswers.slice(0, 200),
-          tone: 'moderne',
-          ambience: 'professionnel et élégant',
-          primaryGoal: 'Présenter mon activité',
-          keyHighlights: ['Qualité', 'Professionnalisme', 'Innovation'],
-          recommendedCTA: 'Nous contacter',
-          colors: ['#3B82F6', '#8B5CF6', '#EF4444'],
-          sections: [],
-          lang: projectLanguage,
-        };
+        setError(
+          t('step2.analysisError', {
+            defaultValue:
+              'Impossible d’analyser votre projet pour le moment. Veuillez réessayer.',
+          })
+        );
+        return;
       }
 
+      const ensuredProfile: StructuredProfile = structuredProfile;
       const projectIdToPersist = projectId ?? project.id;
 
-      updatedProject.structuredProfile = structuredProfile;
-      localStorage.setItem('currentProject', JSON.stringify(updatedProject));
-      setProject(updatedProject);
+      await persistProjectUpdate(projectIdToPersist, {
+        deepAnswers,
+        structuredProfile: ensuredProfile,
+      });
 
-      const isLocalDraft =
-        updatedProject.isLocalDraft ?? updatedProject.slug.startsWith('local-');
-
-      if (!isLocalDraft) {
-        await persistProjectUpdate(
-          projectIdToPersist,
-          {
-            deepAnswers,
-            structuredProfile,
-          },
-          {
-            errorMessage: t('errors.backendSaveFailed', {
-              defaultValue:
-                'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.',
-            }),
-          }
-        );
-      }
-
+      setProject({ ...project, deepAnswers, structuredProfile: ensuredProfile });
       navigate(`/new/step3/${projectIdToPersist}`);
     } catch (error) {
       console.error('Error in handleContinue:', error);

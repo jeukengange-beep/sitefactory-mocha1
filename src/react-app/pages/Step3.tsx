@@ -34,55 +34,22 @@ export default function Step3() {
         }
 
         const projectData: StoredProject = await response.json();
-        projectData.isLocalDraft = false;
-
         if (!projectData.structuredProfile) {
           navigate(`/new/step2/${projectId}`);
           return;
         }
 
         setProject(projectData);
-        localStorage.setItem('currentProject', JSON.stringify(projectData));
         setSelectedInspirations(projectData.selectedInspirations ?? []);
 
         await loadInspirations(projectData);
       } catch (err) {
         console.error('Error loading project for inspirations:', err);
-        const savedProject = localStorage.getItem('currentProject');
-
-        if (savedProject) {
-          try {
-            const localProject = JSON.parse(savedProject) as StoredProject;
-            if (!localProject.id && projectId) {
-              localProject.id = Number(projectId);
-            }
-
-            localProject.isLocalDraft =
-              localProject.isLocalDraft ?? localProject.slug.startsWith('local-');
-
-            if (!localProject.structuredProfile) {
-              navigate(`/new/step2/${projectId}`);
-              return;
-            }
-
-            setProject(localProject);
-            setSelectedInspirations(localProject.selectedInspirations ?? []);
-            await loadInspirations(localProject);
-          } catch (parseError) {
-            console.error('Unable to use local project for inspirations:', parseError);
-            setError(
-              t('step3.loadError', {
-                defaultValue: 'Impossible de charger le projet ou les inspirations.',
-              })
-            );
-          }
-        } else {
-          setError(
-            t('step3.loadError', {
-              defaultValue: 'Impossible de charger le projet ou les inspirations.',
-            })
-          );
-        }
+        setError(
+          t('step3.loadError', {
+            defaultValue: 'Impossible de charger le projet ou les inspirations.',
+          })
+        );
       } finally {
         setIsLoadingInspirations(false);
       }
@@ -108,52 +75,12 @@ export default function Step3() {
       const aiInspirations: Inspiration[] = await inspirationsResponse.json();
       setInspirations(aiInspirations);
     } catch (error) {
-      console.error('Error fetching AI inspirations, using fallback:', error);
-
-      const profile = currentProject.structuredProfile;
-      const isPersonal = currentProject.siteType === 'personal';
-
-      const fallbackInspirations: Inspiration[] = [
-        {
-          id: '1',
-          title: isPersonal ? 'Portfolio Créatif' : 'Agence Moderne',
-          domain: isPersonal ? 'portfoliocreative.design' : 'agencemoderne.co',
-          image: 'https://images.unsplash.com/photo-1558618667-fcc251c78b5e?w=400&h=300&fit=crop',
-          justification: `Design ${profile?.tone || 'moderne'} qui correspond à votre vision ${profile?.ambience || 'professionnelle'}`
-        },
-        {
-          id: '2',
-          title: isPersonal ? 'Showcase Artistique' : 'Services Pro',
-          domain: isPersonal ? 'showcaseartistique.fr' : 'servicespro.io',
-          image: 'https://images.unsplash.com/photo-1542744173-8e7e53415bb0?w=400&h=300&fit=crop',
-          justification: profile?.lang === 'fr'
-            ? `Excellent exemple pour ${profile?.primaryGoal || 'présenter votre activité'}`
-            : `Excellent example for ${profile?.primaryGoal || 'showcasing your business'}`
-        },
-        {
-          id: '3',
-          title: profile?.siteName || 'Site Inspiration',
-          domain: 'inspiration-design.com',
-          image: 'https://images.unsplash.com/photo-1586717791821-3f44a563fa4c?w=400&h=300&fit=crop',
-          justification: `Interface adaptée à votre secteur avec ${profile?.recommendedCTA || 'call-to-action efficace'}`
-        },
-        {
-          id: '4',
-          title: isPersonal ? 'Portfolio Elite' : 'Business Hub',
-          domain: isPersonal ? 'portfolioelite.design' : 'businesshub.co',
-          image: 'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=400&h=300&fit=crop',
-          justification: profile?.keyHighlights?.[0] || 'Design professionnel et impactant'
-        },
-        {
-          id: '5',
-          title: 'Studio Créatif',
-          domain: 'studiocreatif.fr',
-          image: 'https://images.unsplash.com/photo-1574169208507-84376144848b?w=400&h=300&fit=crop',
-          justification: profile?.keyHighlights?.[1] || 'Approche authentique et personnalisée'
-        }
-      ];
-
-      setInspirations(fallbackInspirations);
+      console.error('Error fetching AI inspirations:', error);
+      setError(
+        t('step3.loadError', {
+          defaultValue: 'Impossible de charger le projet ou les inspirations.',
+        })
+      );
     }
   };
 
@@ -178,30 +105,8 @@ export default function Step3() {
     setError(null);
 
     try {
-      const updatedProject: StoredProject = {
-        ...project,
-        selectedInspirations,
-      };
-
-      localStorage.setItem('currentProject', JSON.stringify(updatedProject));
-      setProject(updatedProject);
-
-      const isLocalDraft =
-        updatedProject.isLocalDraft ?? updatedProject.slug.startsWith('local-');
-
-      if (!isLocalDraft) {
-        await persistProjectUpdate(
-          projectId,
-          { selectedInspirations },
-          {
-            errorMessage: t('errors.backendSaveFailed', {
-              defaultValue:
-                'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.',
-            }),
-          }
-        );
-      }
-
+      await persistProjectUpdate(projectId, { selectedInspirations });
+      setProject({ ...project, selectedInspirations });
       navigate(`/new/step4/${projectId}`);
     } catch (err) {
       console.error('Error saving inspirations:', err);
