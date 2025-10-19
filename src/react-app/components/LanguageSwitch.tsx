@@ -12,7 +12,9 @@ export default function LanguageSwitch() {
     { code: 'en', name: 'English', flag: '🇺🇸' }
   ];
 
-  const currentLanguage = languages.find(lang => lang.code === i18n.language) || languages[0];
+  const normalizedLanguage = i18n.language?.split('-')[0] ?? 'fr';
+  const currentLanguage =
+    languages.find((lang) => lang.code === normalizedLanguage) || languages[0];
 
   const changeLanguage = (lng: string) => {
     i18n.changeLanguage(lng);
@@ -44,7 +46,9 @@ export default function LanguageSwitch() {
                 key={language.code}
                 onClick={() => changeLanguage(language.code)}
                 className={`w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center gap-3 transition-colors ${
-                  language.code === i18n.language ? 'bg-blue-50 text-blue-600' : 'text-gray-700'
+                  language.code === normalizedLanguage
+                    ? 'bg-blue-50 text-blue-600'
+                    : 'text-gray-700'
                 }`}
                 whileHover={{ backgroundColor: 'rgba(59, 130, 246, 0.1)' }}
               >
