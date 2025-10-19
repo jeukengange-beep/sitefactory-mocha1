@@ -1,75 +1,28 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'framer-motion';
 import { ArrowLeft, ArrowRight, Check, ExternalLink } from 'lucide-react';
-import { Inspiration, Project } from '@/shared/types';
+import type { Inspiration, StoredProject } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
+import { persistProjectUpdate } from '@/react-app/utils/projectApi';
+import { apiFetch } from '@/react-app/utils/apiClient';
 
 export default function Step3() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { projectId } = useParams();
+  const [project, setProject] = useState<StoredProject | null>(null);
   const [inspirations, setInspirations] = useState<Inspiration[]>([]);
   const [selectedInspirations, setSelectedInspirations] = useState<Inspiration[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingInspirations, setIsLoadingInspirations] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchProject = async () => {
-      if (!projectId) {
-        navigate('/new/step1');
-        return;
-      }
-
-      const project = JSON.parse(savedProject);
-      project.siteType = project.siteType ?? project.site_type;
-      project.language = project.language ?? project.lang ?? 'fr';
-      project.id = project.id ?? (projectId ? Number(projectId) : projectId);
-
-      if (!project.structuredProfile) {
-        // If no structured profile, redirect back to step 2
-        navigate(`/new/step2/${projectId}`);
-        return;
-      }
-
-      try {
-        const response = await fetch(`/api/projects/by-id/${projectId}`);
-        if (!response.ok) {
-          throw new Error('Failed to load project');
-        }
-
-        const projectData: Project = await response.json();
-
-        if (!projectData.structuredProfile) {
-          navigate(`/new/step2/${projectId}`);
-          return;
-        }
-
-        setSelectedInspirations(projectData.selectedInspirations ?? []);
-
-        await loadInspirations(projectData);
-      } catch (err) {
-        console.error('Error loading project for inspirations:', err);
-        setInspirations([]);
-        setError(
-          t('step3.loadError', {
-            defaultValue: 'Impossible de charger le projet ou les inspirations.'
-          })
-        );
-      } finally {
-        setIsLoadingInspirations(false);
-      }
-    };
-
-    fetchProject();
-  }, [navigate, projectId, t]);
-
-  const loadInspirations = async (currentProject: Project) => {
+  const loadInspirations = useCallback(async (currentProject: StoredProject) => {
     try {
-      const inspirationsResponse = await fetch('/api/inspirations', {
+      const inspirationsResponse = await apiFetch('/api/inspirations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -84,54 +37,55 @@ export default function Step3() {
       const aiInspirations: Inspiration[] = await inspirationsResponse.json();
       setInspirations(aiInspirations);
     } catch (error) {
-      console.error('Error fetching AI inspirations, using fallback:', error);
-
-      const profile = currentProject.structuredProfile;
-      const isPersonal = currentProject.siteType === 'personal';
-
-      const fallbackInspirations: Inspiration[] = [
-        {
-          id: '1',
-          title: isPersonal ? 'Portfolio Créatif' : 'Agence Moderne',
-          domain: isPersonal ? 'portfoliocreative.design' : 'agencemoderne.co',
-          image: 'https://images.unsplash.com/photo-1558618667-fcc251c78b5e?w=400&h=300&fit=crop',
-          justification: `Design ${profile?.tone || 'moderne'} qui correspond à votre vision ${profile?.ambience || 'professionnelle'}`
-        },
-        {
-          id: '2',
-          title: isPersonal ? 'Showcase Artistique' : 'Services Pro',
-          domain: isPersonal ? 'showcaseartistique.fr' : 'servicespro.io',
-          image: 'https://images.unsplash.com/photo-1542744173-8e7e53415bb0?w=400&h=300&fit=crop',
-          justification: profile?.lang === 'fr'
-            ? `Excellent exemple pour ${profile?.primaryGoal || 'présenter votre activité'}`
-            : `Excellent example for ${profile?.primaryGoal || 'showcasing your business'}`
-        },
-        {
-          id: '3',
-          title: profile?.siteName || 'Site Inspiration',
-          domain: 'inspiration-design.com',
-          image: 'https://images.unsplash.com/photo-1586717791821-3f44a563fa4c?w=400&h=300&fit=crop',
-          justification: `Interface adaptée à votre secteur avec ${profile?.recommendedCTA || 'call-to-action efficace'}`
-        },
-        {
-          id: '4',
-          title: isPersonal ? 'Portfolio Elite' : 'Business Hub',
-          domain: isPersonal ? 'portfolioelite.design' : 'businesshub.co',
-          image: 'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=400&h=300&fit=crop',
-          justification: profile?.keyHighlights?.[0] || 'Design professionnel et impactant'
-        },
-        {
-          id: '5',
-          title: 'Studio Créatif',
-          domain: 'studiocreatif.fr',
-          image: 'https://images.unsplash.com/photo-1574169208507-84376144848b?w=400&h=300&fit=crop',
-          justification: profile?.keyHighlights?.[1] || 'Approche authentique et personnalisée'
-        }
-      ];
-
-      setInspirations(fallbackInspirations);
+      console.error('Error fetching AI inspirations:', error);
+      setError(
+        t('step3.loadError', {
+          defaultValue: 'Impossible de charger le projet ou les inspirations.',
+        })
+      );
     }
-  };
+  }, [t]);
+
+  useEffect(() => {
+    const fetchProject = async () => {
+      if (!projectId) {
+        navigate('/new/step1');
+        return;
+      }
+
+      setIsLoadingInspirations(true);
+      setError(null);
+
+      try {
+        const response = await apiFetch(`/api/projects/by-id/${projectId}`);
+        if (!response.ok) {
+          throw new Error('Failed to load project');
+        }
+
+        const projectData: StoredProject = await response.json();
+        if (!projectData.structuredProfile) {
+          navigate(`/new/step2/${projectId}`);
+          return;
+        }
+
+        setProject(projectData);
+        setSelectedInspirations(projectData.selectedInspirations ?? []);
+
+        await loadInspirations(projectData);
+      } catch (err) {
+        console.error('Error loading project for inspirations:', err);
+        setError(
+          t('step3.loadError', {
+            defaultValue: 'Impossible de charger le projet ou les inspirations.',
+          })
+        );
+      } finally {
+        setIsLoadingInspirations(false);
+      }
+    };
+
+    void fetchProject();
+  }, [loadInspirations, navigate, projectId, t]);
 
   const handleBack = () => {
     navigate(`/new/step2/${projectId}`);
@@ -146,7 +100,7 @@ export default function Step3() {
   };
 
   const handleContinue = async () => {
-    if (!projectId) {
+    if (!projectId || !project) {
       return;
     }
 
@@ -154,16 +108,8 @@ export default function Step3() {
     setError(null);
 
     try {
-      const response = await fetch(`/api/projects/${projectId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selectedInspirations })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to save inspirations');
-      }
-
+      await persistProjectUpdate(projectId, { selectedInspirations });
+      setProject({ ...project, selectedInspirations });
       navigate(`/new/step4/${projectId}`);
     } catch (err) {
       console.error('Error saving inspirations:', err);

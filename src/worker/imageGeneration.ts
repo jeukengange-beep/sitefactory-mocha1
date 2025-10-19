@@ -1,5 +1,7 @@
 import { GeneratedImage, StructuredProfile, Inspiration } from '@/shared/types';
 
+type StructuredSection = NonNullable<StructuredProfile['sections']>[number];
+
 interface StyleCollection {
   [key: string]: string[];
 }
@@ -41,7 +43,7 @@ export class GoogleImageGeneration implements ImageGenerationService {
 
       // Generate section images
       if (profile.sections) {
-        profile.sections.forEach((section, index) => {
+        profile.sections.forEach((section: StructuredSection, index: number) => {
           if (imageSelections.sections[index]) {
             generatedImages.push({
               id: section.id,
@@ -302,7 +304,7 @@ export class GoogleImageGeneration implements ImageGenerationService {
     }];
 
     if (profile.sections) {
-      profile.sections.slice(0, 4).forEach((section, index) => {
+      profile.sections.slice(0, 4).forEach((section: StructuredSection, index: number) => {
         images.push({
           id: section.id,
           type: 'section',
