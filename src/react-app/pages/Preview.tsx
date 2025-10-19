@@ -37,6 +37,9 @@ export default function Preview() {
         siteType: 'business',
         language: 'fr',
         status: 'completed',
+        deepAnswers: null,
+        structuredProfile: null,
+        selectedInspirations: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         generatedImages: [

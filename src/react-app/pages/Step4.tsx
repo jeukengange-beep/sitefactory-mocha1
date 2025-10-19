@@ -3,10 +3,14 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'framer-motion';
 import { Download, Share2, MessageCircle, ArrowLeft, Eye } from 'lucide-react';
-import { GeneratedImage, Project } from '@/shared/types';
+import type {
+  GeneratedImage,
+  StoredProject,
+} from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
 import { persistProjectUpdate } from '@/react-app/utils/projectApi';
+import { apiFetch } from '@/react-app/utils/apiClient';
 
 export default function Step4() {
   const { t } = useTranslation();
@@ -18,113 +22,88 @@ export default function Step4() {
   const [error, setError] = useState<string | null>(null);
 
   const generateImages = useCallback(async () => {
+    if (!projectId) {
+      navigate('/new/step1');
+      return;
+    }
+
     setIsLoading(true);
+    setError(null);
+
+    let projectData: StoredProject;
+
     try {
-      const response = await fetch(`/api/projects/${projectId}`, {
-        method: 'PATCH',
+      const response = await apiFetch(`/api/projects/by-id/${projectId}`);
+
+      if (!response.ok) {
+        throw new Error(`Failed to load project (status ${response.status})`);
+      }
+
+      projectData = (await response.json()) as StoredProject;
+    } catch (fetchError) {
+      console.error('Error loading project for step 4:', fetchError);
+      setError(
+        t('step4.loadError', {
+          defaultValue: 'Impossible de récupérer votre projet. Veuillez recommencer.',
+        })
+      );
+      setIsLoading(false);
+      return;
+    }
+
+    setProjectSlug(projectData.slug);
+
+    if (!projectData.structuredProfile) {
+      navigate(`/new/step2/${projectId}`);
+      setIsLoading(false);
+      return;
+    }
+
+    if (projectData.generatedImages && projectData.generatedImages.length > 0) {
+      setGeneratedImages(projectData.generatedImages);
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const generateResponse = await apiFetch('/api/generate', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          generatedImages: images,
-          status: 'completed'
-        })
+          structuredProfile: projectData.structuredProfile,
+          selectedInspirations: projectData.selectedInspirations ?? [],
+        }),
       });
 
-      if (response.ok) {
-        const updatedProject: Project = await response.json();
-        setProjectSlug(updatedProject.slug);
+      if (!generateResponse.ok) {
+        throw new Error('Image generation failed');
       }
-    } catch (persistError) {
-      console.error('Error saving generated images:', persistError);
-    }
-  }, [projectId]);
 
-      const project = JSON.parse(savedProject);
-      project.siteType = project.siteType ?? project.site_type;
-      project.language = project.language ?? project.lang ?? 'fr';
-      project.id = project.id ?? (projectId ? Number(projectId) : projectId);
+      const aiGeneratedImages: GeneratedImage[] = await generateResponse.json();
+      setGeneratedImages(aiGeneratedImages);
 
-      if (!project.structuredProfile) {
-        navigate('/new/step2');
+      try {
+        await persistProjectUpdate(projectId, {
+          generatedImages: aiGeneratedImages,
+          status: 'completed',
+        });
+      } catch (persistError) {
+        console.error('Error saving generated images:', persistError);
+        setError(
+          t('errors.backendSaveFailed', {
+            defaultValue: 'Impossible de sauvegarder le projet côté serveur. Veuillez réessayer.',
+          })
+        );
         return;
       }
-
-      const existingSlug = typeof project.slug === 'string' ? project.slug : undefined;
-      const persistedSlug = existingSlug ?? `project-${Date.now()}`;
-      project.slug = persistedSlug;
-      setProjectSlug(persistedSlug);
-
-      // Generate real AI images based on structured profile and inspirations
-      try {
-        const generateResponse = await fetch('/api/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            structuredProfile: project.structuredProfile,
-            selectedInspirations: project.selectedInspirations || []
-          })
-        });
-
-        if (generateResponse.ok) {
-          const aiGeneratedImages = await generateResponse.json();
-          setGeneratedImages(aiGeneratedImages);
-
-          project.generatedImages = aiGeneratedImages;
-          project.status = 'completed';
-          localStorage.setItem('currentProject', JSON.stringify(project));
-
-          await persistProjectUpdate(projectId ?? project.id, {
-            generatedImages: aiGeneratedImages,
-            status: 'completed',
-          }, {
-            errorMessage: t('errors.backendSaveFailed', {
-              defaultValue: 'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.'
-            })
-          });
-        } else {
-          throw new Error('Image generation failed');
-        }
-      } catch (error) {
-        console.error('Error generating AI images, using fallback:', error);
-
-        // Fallback to curated images based on profile
-        const profile = project.structuredProfile;
-        const fallbackImages: GeneratedImage[] = [
-          {
-            id: 'overview',
-            type: 'overview',
-            url: 'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=800&h=600&fit=crop',
-            filename: 'site-overview.png'
-          }
-        ];
-
-        profile.sections.forEach((section, index) => {
-          fallbackImages.push({
-            id: section.id,
-            type: 'section',
-            sectionId: section.id,
-            url: contextualImages[index % contextualImages.length],
-            filename: `${section.id}-section.png`
-          });
-        }
-
-        setGeneratedImages(fallbackImages);
-
-        project.generatedImages = fallbackImages;
-        project.status = 'completed';
-        localStorage.setItem('currentProject', JSON.stringify(project));
-
-        await persistProjectUpdate(projectId ?? project.id, {
-          generatedImages: fallbackImages,
-          status: 'completed',
-        }, {
-          errorMessage: t('errors.backendSaveFailed', {
-            defaultValue: 'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.'
-          })
-        });
-      }
-
-      setGeneratedImages(fallbackImages);
-      await persistGeneratedImages(fallbackImages);
+    } catch (generationError) {
+      console.error('Error generating AI images:', generationError);
+      setError(
+        t('step4.generationError', {
+          defaultValue:
+            'Impossible de générer automatiquement les images. Veuillez réessayer plus tard.',
+        })
+      );
     } finally {
       setIsLoading(false);
     }
@@ -148,7 +127,7 @@ export default function Step4() {
   };
 
   const handleDownloadAll = () => {
-    generatedImages.forEach(image => {
+    generatedImages.forEach((image) => {
       setTimeout(() => handleDownload(image), 100);
     });
   };
@@ -167,8 +146,8 @@ export default function Step4() {
     window.open(`https://wa.me/?text=${message}`, '_blank');
   };
 
-  const overviewImage = generatedImages.find(img => img.type === 'overview');
-  const sectionImages = generatedImages.filter(img => img.type === 'section');
+  const overviewImage = generatedImages.find((img) => img.type === 'overview');
+  const sectionImages = generatedImages.filter((img) => img.type === 'section');
 
   if (isLoading) {
     return (
@@ -264,7 +243,7 @@ export default function Step4() {
 
         {sectionImages.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
-            {sectionImages.map(image => (
+            {sectionImages.map((image) => (
               <motion.div
                 key={image.id}
                 initial={{ opacity: 0, y: 20 }}
@@ -356,4 +335,3 @@ export default function Step4() {
     </div>
   );
 }
-

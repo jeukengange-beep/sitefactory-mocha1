@@ -62,6 +62,8 @@ export const ProjectSchema = z.object({
 });
 export type Project = z.infer<typeof ProjectSchema>;
 
+export type StoredProject = Project;
+
 // API Request/Response schemas
 export const CreateProjectRequestSchema = z.object({
   siteType: SiteTypeSchema,
