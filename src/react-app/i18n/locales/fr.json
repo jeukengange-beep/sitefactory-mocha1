@@ -71,6 +71,11 @@
     "priceDescription": "pour la réalisation complète de votre site",
     "footerNote": "Besoin d'ajustements ? Nous sommes à votre écoute."
   },
+  "preview": {
+    "loadError": "Impossible de charger cet aperçu pour le moment. Veuillez réessayer plus tard.",
+    "notFound": "Ce projet est introuvable ou a été supprimé.",
+    "missingSlug": "Lien d’aperçu invalide. Veuillez vérifier l’URL."
+  },
   "errors": {
     "genericError": "Une erreur inattendue s'est produite",
     "networkError": "Erreur de connexion",

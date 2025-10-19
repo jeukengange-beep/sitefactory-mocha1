@@ -1,85 +1,70 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router';
 import { motion } from 'framer-motion';
 import { Download, Share2, MessageCircle, Sparkles } from 'lucide-react';
 import { Project, GeneratedImage } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
+import { apiFetch } from '@/react-app/utils/apiClient';
 
 export default function Preview() {
   const { t } = useTranslation();
   const { slug } = useParams();
   const [project, setProject] = useState<Project | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadProject();
-  }, [slug]);
+  const loadProject = useCallback(async () => {
+    if (!slug) {
+      setProject(null);
+      setError(
+        t('preview.missingSlug', {
+          defaultValue: 'Lien d’aperçu invalide. Veuillez vérifier l’URL.',
+        })
+      );
+      setIsLoading(false);
+      return;
+    }
 
-  const loadProject = async () => {
     setIsLoading(true);
+    setError(null);
+
     try {
-      // Try to load from localStorage first
-      const savedProject = localStorage.getItem('currentProject');
-      if (savedProject) {
-        const projectData = JSON.parse(savedProject);
-        if (projectData.slug === slug) {
-          setProject(projectData);
-          setIsLoading(false);
-          return;
-        }
+      const response = await apiFetch(`/api/projects/${slug}`);
+
+      if (response.status === 404) {
+        setProject(null);
+        setError(
+          t('preview.notFound', {
+            defaultValue: 'Ce projet est introuvable ou a été supprimé.',
+          })
+        );
+        return;
       }
 
-      // Mock project data for now
-      const mockProject: Project = {
-        id: 1,
-        slug: slug || '',
-        siteType: 'business',
-        language: 'fr',
-        status: 'completed',
-        deepAnswers: null,
-        structuredProfile: null,
-        selectedInspirations: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        generatedImages: [
-          {
-            id: 'overview',
-            type: 'overview',
-            url: 'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=800&h=600&fit=crop',
-            filename: 'site-overview.png'
-          },
-          {
-            id: 'hero',
-            type: 'section',
-            sectionId: 'hero',
-            url: 'https://images.unsplash.com/photo-1559136555-9303baea8ebd?w=800&h=400&fit=crop',
-            filename: 'hero-section.png'
-          },
-          {
-            id: 'about',
-            type: 'section',
-            sectionId: 'about',
-            url: 'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=800&h=400&fit=crop',
-            filename: 'about-section.png'
-          },
-          {
-            id: 'services',
-            type: 'section',
-            sectionId: 'services',
-            url: 'https://images.unsplash.com/photo-1586717791821-3f44a563fa4c?w=800&h=400&fit=crop',
-            filename: 'services-section.png'
-          }
-        ]
-      };
+      if (!response.ok) {
+        throw new Error(`Failed to fetch project preview (status ${response.status})`);
+      }
 
-      setProject(mockProject);
-    } catch (error) {
-      console.error('Error loading project:', error);
+      const projectData: Project = await response.json();
+      setProject(projectData);
+    } catch (fetchError) {
+      console.error('Error loading project preview:', fetchError);
+      setProject(null);
+      setError(
+        t('preview.loadError', {
+          defaultValue:
+            'Impossible de charger cet aperçu pour le moment. Veuillez réessayer plus tard.',
+        })
+      );
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [slug, t]);
+
+  useEffect(() => {
+    void loadProject();
+  }, [loadProject]);
 
   const handleDownload = (image: GeneratedImage) => {
     const link = document.createElement('a');
@@ -125,15 +110,19 @@ export default function Preview() {
     );
   }
 
-  if (!project) {
+  if (error) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 flex items-center justify-center">
         <div className="text-center">
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Projet introuvable</h2>
-          <p className="text-gray-600">Ce lien ne semble pas valide.</p>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">{t('common.error')}</h2>
+          <p className="text-gray-600">{error}</p>
         </div>
       </div>
     );
+  }
+
+  if (!project) {
+    return null;
   }
 
   const overviewImage = project.generatedImages?.find(img => img.type === 'overview');

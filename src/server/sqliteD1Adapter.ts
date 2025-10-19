@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import type { Statement } from "better-sqlite3";
-import type { D1Database, D1PreparedStatement, D1RunResult } from "@/worker/app";
+import type { D1Database, D1PreparedStatement, D1RunResult } from "../worker/app";
 
 type Row = Record<string, unknown>;
 type SqliteDatabase = InstanceType<typeof Database>;

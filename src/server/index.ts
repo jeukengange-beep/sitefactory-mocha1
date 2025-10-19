@@ -4,7 +4,7 @@ import path from "node:path";
 import { serve } from "@hono/node-server";
 import Database from "better-sqlite3";
 
-import { createApp, type WorkerBindings } from "@/worker/app";
+import { createApp, type WorkerBindings } from "../worker/app";
 import { createSQLiteD1Database } from "./sqliteD1Adapter";
 import { runMigrations } from "./migrate";
 

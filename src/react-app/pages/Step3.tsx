@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'framer-motion';
@@ -20,12 +20,41 @@ export default function Step3() {
   const [isLoadingInspirations, setIsLoadingInspirations] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const loadInspirations = useCallback(async (currentProject: StoredProject) => {
+    try {
+      const inspirationsResponse = await apiFetch('/api/inspirations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          structuredProfile: currentProject.structuredProfile
+        })
+      });
+
+      if (!inspirationsResponse.ok) {
+        throw new Error('Failed to fetch AI inspirations');
+      }
+
+      const aiInspirations: Inspiration[] = await inspirationsResponse.json();
+      setInspirations(aiInspirations);
+    } catch (error) {
+      console.error('Error fetching AI inspirations:', error);
+      setError(
+        t('step3.loadError', {
+          defaultValue: 'Impossible de charger le projet ou les inspirations.',
+        })
+      );
+    }
+  }, [t]);
+
   useEffect(() => {
     const fetchProject = async () => {
       if (!projectId) {
         navigate('/new/step1');
         return;
       }
+
+      setIsLoadingInspirations(true);
+      setError(null);
 
       try {
         const response = await apiFetch(`/api/projects/by-id/${projectId}`);
@@ -55,34 +84,8 @@ export default function Step3() {
       }
     };
 
-    fetchProject();
-  }, [navigate, projectId, t]);
-
-  const loadInspirations = async (currentProject: StoredProject) => {
-    try {
-      const inspirationsResponse = await apiFetch('/api/inspirations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          structuredProfile: currentProject.structuredProfile
-        })
-      });
-
-      if (!inspirationsResponse.ok) {
-        throw new Error('Failed to fetch AI inspirations');
-      }
-
-      const aiInspirations: Inspiration[] = await inspirationsResponse.json();
-      setInspirations(aiInspirations);
-    } catch (error) {
-      console.error('Error fetching AI inspirations:', error);
-      setError(
-        t('step3.loadError', {
-          defaultValue: 'Impossible de charger le projet ou les inspirations.',
-        })
-      );
-    }
-  };
+    void fetchProject();
+  }, [loadInspirations, navigate, projectId, t]);
 
   const handleBack = () => {
     navigate(`/new/step2/${projectId}`);

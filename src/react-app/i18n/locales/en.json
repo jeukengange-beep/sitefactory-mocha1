@@ -71,6 +71,11 @@
     "priceDescription": "for the complete realization of your website",
     "footerNote": "Need tweaks? We're here to help."
   },
+  "preview": {
+    "loadError": "We couldn't load this preview right now. Please try again later.",
+    "notFound": "This project could not be found or may have been removed.",
+    "missingSlug": "Invalid preview link. Please verify the URL."
+  },
   "errors": {
     "genericError": "An unexpected error occurred",
     "networkError": "Connection error",
