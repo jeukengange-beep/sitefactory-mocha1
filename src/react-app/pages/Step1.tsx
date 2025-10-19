@@ -39,6 +39,10 @@ export default function Step1() {
 
     setIsLoading(true);
     setError(null);
+    const now = new Date().toISOString();
+    const fallbackLanguage: StoredProject['language'] =
+      i18n.language === 'en' ? 'en' : 'fr';
+
     try {
       const normalizedLanguage: Language = (() => {
         const rawLanguage = i18n.language ?? 'fr';
