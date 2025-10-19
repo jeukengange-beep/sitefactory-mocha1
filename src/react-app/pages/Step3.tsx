@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'framer-motion';
 import { ArrowLeft, ArrowRight, Check, ExternalLink } from 'lucide-react';
-import type { Inspiration, Project } from '@/shared/types';
+import type { Inspiration, StoredProject } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
 import { persistProjectUpdate } from '@/react-app/utils/projectApi';
@@ -13,7 +13,7 @@ export default function Step3() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { projectId } = useParams();
-  const [project, setProject] = useState<Project | null>(null);
+  const [project, setProject] = useState<StoredProject | null>(null);
   const [inspirations, setInspirations] = useState<Inspiration[]>([]);
   const [selectedInspirations, setSelectedInspirations] = useState<Inspiration[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -33,7 +33,8 @@ export default function Step3() {
           throw new Error('Failed to load project');
         }
 
-        const projectData: Project = await response.json();
+        const projectData: StoredProject = await response.json();
+        projectData.isLocalDraft = false;
 
         if (!projectData.structuredProfile) {
           navigate(`/new/step2/${projectId}`);
@@ -51,10 +52,13 @@ export default function Step3() {
 
         if (savedProject) {
           try {
-            const localProject = JSON.parse(savedProject) as Project;
+            const localProject = JSON.parse(savedProject) as StoredProject;
             if (!localProject.id && projectId) {
               localProject.id = Number(projectId);
             }
+
+            localProject.isLocalDraft =
+              localProject.isLocalDraft ?? localProject.slug.startsWith('local-');
 
             if (!localProject.structuredProfile) {
               navigate(`/new/step2/${projectId}`);
@@ -87,7 +91,7 @@ export default function Step3() {
     fetchProject();
   }, [navigate, projectId, t]);
 
-  const loadInspirations = async (currentProject: Project) => {
+  const loadInspirations = async (currentProject: StoredProject) => {
     try {
       const inspirationsResponse = await apiFetch('/api/inspirations', {
         method: 'POST',
@@ -174,7 +178,7 @@ export default function Step3() {
     setError(null);
 
     try {
-      const updatedProject: Project = {
+      const updatedProject: StoredProject = {
         ...project,
         selectedInspirations,
       };
@@ -182,16 +186,21 @@ export default function Step3() {
       localStorage.setItem('currentProject', JSON.stringify(updatedProject));
       setProject(updatedProject);
 
-      await persistProjectUpdate(
-        projectId,
-        { selectedInspirations },
-        {
-          errorMessage: t('errors.backendSaveFailed', {
-            defaultValue:
-              'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.',
-          }),
-        }
-      );
+      const isLocalDraft =
+        updatedProject.isLocalDraft ?? updatedProject.slug.startsWith('local-');
+
+      if (!isLocalDraft) {
+        await persistProjectUpdate(
+          projectId,
+          { selectedInspirations },
+          {
+            errorMessage: t('errors.backendSaveFailed', {
+              defaultValue:
+                'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.',
+            }),
+          }
+        );
+      }
 
       navigate(`/new/step4/${projectId}`);
     } catch (err) {

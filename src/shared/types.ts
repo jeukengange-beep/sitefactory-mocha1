@@ -62,6 +62,14 @@ export const ProjectSchema = z.object({
 });
 export type Project = z.infer<typeof ProjectSchema>;
 
+export type StoredProject = Project & {
+  /**
+   * Marks projects that were created locally when the backend was unavailable.
+   * These drafts should skip server persistence until a real record exists.
+   */
+  isLocalDraft?: boolean;
+};
+
 // API Request/Response schemas
 export const CreateProjectRequestSchema = z.object({
   siteType: SiteTypeSchema,

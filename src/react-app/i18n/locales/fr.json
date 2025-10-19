@@ -38,25 +38,37 @@
     "title": "Parlez-nous de votre projet",
     "subtitle": "Plus vous serez précis, plus l'aperçu sera personnalisé",
     "placeholder": "Décrivez votre activité, vos objectifs, votre style préféré, vos couleurs, votre public cible, ce qui vous rend unique...\n\nExemple : Je suis photographe spécialisée dans les mariages. Je veux un site élégant et romantique avec des tons pastel. Mon objectif est d'attirer de futurs mariés et de présenter mon portfolio. J'aime les designs minimalistes avec beaucoup d'espace blanc.",
-    "minLength": "Minimum 50 caractères requis"
+    "minLength": "Minimum 50 caractères requis",
+    "loadError": "Impossible de charger votre projet. Veuillez recommencer.",
+    "saveError": "Impossible d'enregistrer vos réponses. Veuillez réessayer."
   },
   "step3": {
     "title": "Sources d'inspiration",
     "subtitle": "Nous avons trouvé ces sites qui pourraient vous inspirer",
     "selectMax": "Sélectionnez jusqu'à 2 inspirations",
     "selected": "sélectionné",
-    "justification": "Pourquoi cette inspiration :"
+    "justification": "Pourquoi cette inspiration :",
+    "loadError": "Impossible de charger le projet ou les inspirations.",
+    "saveError": "Impossible d'enregistrer vos inspirations. Veuillez réessayer."
   },
   "step4": {
     "title": "Vos aperçus sont prêts !",
     "subtitle": "Voici les aperçus visuels de votre futur site web",
+    "loadError": "Impossible de récupérer votre projet. Veuillez recommencer.",
+    "generationError": "Impossible de générer automatiquement les images. Nous avons sélectionné des visuels adaptés.",
     "overview": "Vue d'ensemble",
     "sections": "Sections",
+    "sectionPreview": "Aperçu de la section",
+    "download": "Télécharger",
+    "preview": "Aperçu",
     "downloadAll": "Tout télécharger",
-    "shareLink": "Lien de partage",
-    "whatsappCTA": "Parler sur WhatsApp",
+    "shareTitle": "Partagez votre projet",
+    "shareSubtitle": "Envoyez vos aperçus à votre entourage ou à un potentiel prestataire",
+    "copyLink": "Copier le lien",
+    "whatsapp": "Partager sur WhatsApp",
     "price": "35 000 FCFA",
-    "priceDescription": "pour la réalisation complète de votre site"
+    "priceDescription": "pour la réalisation complète de votre site",
+    "footerNote": "Besoin d'ajustements ? Nous sommes à votre écoute."
   },
   "errors": {
     "genericError": "Une erreur inattendue s'est produite",

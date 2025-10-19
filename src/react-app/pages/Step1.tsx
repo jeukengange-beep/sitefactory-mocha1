@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { motion } from 'framer-motion';
 import { User, Building2, ArrowRight } from 'lucide-react';
-import { SiteType, type Project } from '@/shared/types';
+import { SiteType, type StoredProject } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
 import { apiFetch } from '@/react-app/utils/apiClient';
@@ -40,7 +40,8 @@ export default function Step1() {
     setIsLoading(true);
     setError(null);
     const now = new Date().toISOString();
-    const fallbackLanguage: Project['language'] = i18n.language === 'en' ? 'en' : 'fr';
+    const fallbackLanguage: StoredProject['language'] =
+      i18n.language === 'en' ? 'en' : 'fr';
 
     try {
       const response = await apiFetch('/api/projects', {
@@ -54,13 +55,14 @@ export default function Step1() {
 
       if (!response.ok) throw new Error('Failed to create project');
 
-      const project: Project = await response.json();
+      const project: StoredProject = await response.json();
+      project.isLocalDraft = false;
       localStorage.setItem('currentProject', JSON.stringify(project));
       navigate(`/new/step2/${project.id}`);
     } catch (error) {
       console.error('Error creating project:', error);
       const fallbackId = Date.now();
-      const fallbackProject: Project = {
+      const fallbackProject: StoredProject = {
         id: fallbackId,
         slug: `local-${fallbackId}`,
         siteType: selectedType,
@@ -71,7 +73,8 @@ export default function Step1() {
         selectedInspirations: null,
         generatedImages: null,
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
+        isLocalDraft: true
       };
 
       localStorage.setItem('currentProject', JSON.stringify(fallbackProject));

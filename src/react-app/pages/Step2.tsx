@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'framer-motion';
 import { ArrowRight, ArrowLeft } from 'lucide-react';
-import type { Project, StructuredProfile } from '@/shared/types';
+import type { StoredProject, StructuredProfile } from '@/shared/types';
 import LanguageSwitch from '@/react-app/components/LanguageSwitch';
 import StepIndicator from '@/react-app/components/StepIndicator';
 import { persistProjectUpdate } from '@/react-app/utils/projectApi';
@@ -13,7 +13,7 @@ export default function Step2() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { projectId } = useParams();
-  const [project, setProject] = useState<Project | null>(null);
+  const [project, setProject] = useState<StoredProject | null>(null);
   const [deepAnswers, setDeepAnswers] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isFetching, setIsFetching] = useState(true);
@@ -40,7 +40,8 @@ export default function Step2() {
           throw new Error(`Failed to load project (status ${response.status})`);
         }
 
-        const projectData: Project = await response.json();
+        const projectData: StoredProject = await response.json();
+        projectData.isLocalDraft = false;
 
         setProject(projectData);
         setDeepAnswers(projectData.deepAnswers ?? '');
@@ -51,13 +52,16 @@ export default function Step2() {
         const savedProject = localStorage.getItem('currentProject');
         if (savedProject) {
           try {
-            const localProject = JSON.parse(savedProject) as Project;
-            if (!localProject.id && projectId) {
-              localProject.id = Number(projectId);
-            }
+          const localProject = JSON.parse(savedProject) as StoredProject;
+          if (!localProject.id && projectId) {
+            localProject.id = Number(projectId);
+          }
 
-            setProject(localProject);
-            setDeepAnswers(localProject.deepAnswers ?? '');
+          localProject.isLocalDraft =
+            localProject.isLocalDraft ?? localProject.slug.startsWith('local-');
+
+          setProject(localProject);
+          setDeepAnswers(localProject.deepAnswers ?? '');
           } catch (parseError) {
             console.error('Unable to parse project from localStorage:', parseError);
             setError(
@@ -98,14 +102,14 @@ export default function Step2() {
       const projectSiteType = project.siteType;
       const projectLanguage = project.language;
 
-      const updatedProject: Project = {
+      const updatedProject: StoredProject = {
         ...project,
         deepAnswers,
       };
 
       localStorage.setItem('currentProject', JSON.stringify(updatedProject));
 
-      let structuredProfile: StructuredProfile | null = project.structuredProfile;
+    let structuredProfile: StructuredProfile | null = project.structuredProfile;
 
       if (!structuredProfile) {
         try {
@@ -149,19 +153,24 @@ export default function Step2() {
       localStorage.setItem('currentProject', JSON.stringify(updatedProject));
       setProject(updatedProject);
 
-      await persistProjectUpdate(
-        projectIdToPersist,
-        {
-          deepAnswers,
-          structuredProfile,
-        },
-        {
-          errorMessage: t('errors.backendSaveFailed', {
-            defaultValue:
-              'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.',
-          }),
-        }
-      );
+      const isLocalDraft =
+        updatedProject.isLocalDraft ?? updatedProject.slug.startsWith('local-');
+
+      if (!isLocalDraft) {
+        await persistProjectUpdate(
+          projectIdToPersist,
+          {
+            deepAnswers,
+            structuredProfile,
+          },
+          {
+            errorMessage: t('errors.backendSaveFailed', {
+              defaultValue:
+                'Impossible de sauvegarder le projet côté serveur. Les données locales sont conservées.',
+            }),
+          }
+        );
+      }
 
       navigate(`/new/step3/${projectIdToPersist}`);
     } catch (error) {
