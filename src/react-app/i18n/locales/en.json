@@ -38,30 +38,44 @@
     "title": "Tell us about your project",
     "subtitle": "The more specific you are, the more personalized the preview will be",
     "placeholder": "Describe your activity, goals, preferred style, colors, target audience, what makes you unique...\n\nExample: I'm a photographer specializing in weddings. I want an elegant and romantic website with pastel tones. My goal is to attract future brides and showcase my portfolio. I love minimalist designs with lots of white space.",
-    "minLength": "Minimum 50 characters required"
+    "minLength": "Minimum 50 characters required",
+    "loadError": "We couldn't load your project. Please start over.",
+    "analysisError": "We couldn't analyze your project right now. Please try again.",
+    "saveError": "We couldn't save your answers. Please try again."
   },
   "step3": {
     "title": "Sources of inspiration",
     "subtitle": "We found these websites that could inspire you",
     "selectMax": "Select up to 2 inspirations",
     "selected": "selected",
-    "justification": "Why this inspiration:"
+    "justification": "Why this inspiration:",
+    "loadError": "We couldn't load the project or inspirations.",
+    "saveError": "We couldn't save your inspirations. Please try again."
   },
   "step4": {
     "title": "Your previews are ready!",
     "subtitle": "Here are the visual previews of your future website",
+    "loadError": "We couldn't retrieve your project. Please start over.",
+    "generationError": "We couldn't generate images automatically. Please try again later.",
     "overview": "Overview",
     "sections": "Sections",
+    "sectionPreview": "Section preview",
+    "download": "Download",
+    "preview": "Preview",
     "downloadAll": "Download All",
-    "shareLink": "Share Link",
-    "whatsappCTA": "Chat on WhatsApp",
+    "shareTitle": "Share your project",
+    "shareSubtitle": "Send your previews to your network or a potential partner",
+    "copyLink": "Copy link",
+    "whatsapp": "Share on WhatsApp",
     "price": "35,000 CFA",
-    "priceDescription": "for the complete realization of your website"
+    "priceDescription": "for the complete realization of your website",
+    "footerNote": "Need tweaks? We're here to help."
   },
   "errors": {
     "genericError": "An unexpected error occurred",
     "networkError": "Connection error",
     "validationError": "Invalid data",
-    "backendSaveFailed": "We could not save the project on the server. Your local changes are still available."
+    "backendSaveFailed": "We couldn't save the project on the server. Please try again.",
+    "backendUnavailable": "The server is unreachable. Please try again."
   }
 }

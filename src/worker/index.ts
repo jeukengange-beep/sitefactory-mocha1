@@ -10,20 +10,85 @@ import {
   GenerateImagesRequestSchema,
   type Inspiration,
   type StructuredProfile,
-  type AnalyzeRequest
+  type AnalyzeRequest,
+  type Project,
+  type GeneratedImage
 } from "@/shared/types";
 import { GoogleImageGeneration } from "./imageGeneration";
 
+type D1ResultRow = Record<string, unknown>;
+
+type D1RunResult = {
+  success: boolean;
+  meta?: {
+    last_row_id?: number;
+  };
+};
+
+interface D1PreparedStatement {
+  bind(...values: unknown[]): D1PreparedStatement;
+  first<T = D1ResultRow>(): Promise<T | null>;
+  run(): Promise<D1RunResult>;
+  all<T = D1ResultRow>(): Promise<{ results: T[] }>;
+}
+
+interface D1Database {
+  prepare(query: string): D1PreparedStatement;
+}
+
 type WorkerBindings = {
   GOOGLE_AI_API_KEY?: string;
-  DB: any;
-  R2_BUCKET: any;
+  DB: D1Database;
+  R2_BUCKET: unknown;
 };
 
 type GenerativeModel = ReturnType<GoogleGenerativeAI["getGenerativeModel"]>;
 const imageGenerationService = new GoogleImageGeneration();
 
 const app = new Hono<{ Bindings: WorkerBindings }>();
+
+type DbProjectRow = {
+  id: number;
+  slug: string;
+  site_type: Project['siteType'];
+  language: Project['language'];
+  status: Project['status'];
+  created_at: string;
+  updated_at: string;
+  deep_answers: string | null;
+  structured_profile: string | null;
+  selected_inspirations: string | null;
+  generated_images: string | null;
+};
+
+function parseJsonField<T>(value: string | null): T | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value) as T;
+  } catch (error) {
+    console.error('Failed to parse JSON field:', error);
+    return null;
+  }
+}
+
+function mapProjectFromRow(row: DbProjectRow): Project {
+  return {
+    id: row.id,
+    slug: row.slug,
+    siteType: row.site_type,
+    language: row.language,
+    status: row.status,
+    deepAnswers: row.deep_answers,
+    structuredProfile: parseJsonField<StructuredProfile>(row.structured_profile),
+    selectedInspirations: parseJsonField<Inspiration[]>(row.selected_inspirations),
+    generatedImages: parseJsonField<GeneratedImage[]>(row.generated_images),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
 
 app.use("*", cors());
 
@@ -54,22 +119,52 @@ app.post("/api/projects", async (c) => {
     `;
 
     const insertResult = await c.env.DB.prepare(insertSql)
-      .bind(slug, data.siteType, data.language, 'draft', now, now)
+      .bind(
+        slug,
+        data.siteType,
+        data.language,
+        'draft',
+        now,
+        now,
+        null,
+        null,
+        null,
+        null
+      )
       .run();
 
     const projectId = insertResult.meta?.last_row_id;
 
-    const project = {
-      id: projectId ?? Date.now(),
-      slug,
-      siteType: data.siteType,
-      language: data.language,
-      status: 'draft' as const,
-      createdAt: now,
-      updatedAt: now,
-    };
+    if (!projectId) {
+      return c.json(
+        {
+          id: Date.now(),
+          slug,
+          siteType: data.siteType,
+          language: data.language,
+          status: 'draft' as const,
+          deepAnswers: null,
+          structuredProfile: null,
+          selectedInspirations: null,
+          generatedImages: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+        201
+      );
+    }
 
-    return c.json(project);
+    const createdRow = await c.env.DB.prepare(
+      "SELECT * FROM projects WHERE id = ?"
+    )
+      .bind(projectId)
+      .first<DbProjectRow>();
+
+    if (!createdRow) {
+      return c.json({ error: 'Failed to load created project' }, 500);
+    }
+
+    return c.json(mapProjectFromRow(createdRow), 201);
   } catch (error) {
     console.error('Error creating project:', error);
     return c.json({ error: 'Failed to create project' }, 500);
@@ -145,28 +240,13 @@ app.get("/api/projects/:slug", async (c) => {
 
     const result = await c.env.DB.prepare(
       "SELECT * FROM projects WHERE slug = ?"
-    ).bind(slug).first();
+    ).bind(slug).first<DbProjectRow>();
 
     if (!result) {
       return c.json({ error: 'Project not found' }, 404);
     }
 
-    // Parse JSON fields and normalize casing
-    const project = {
-      id: result.id,
-      slug: result.slug,
-      siteType: result.site_type,
-      deepAnswers: result.deep_answers ?? undefined,
-      structuredProfile: result.structured_profile ? JSON.parse(result.structured_profile as string) : undefined,
-      selectedInspirations: result.selected_inspirations ? JSON.parse(result.selected_inspirations as string) : undefined,
-      generatedImages: result.generated_images ? JSON.parse(result.generated_images as string) : undefined,
-      language: result.language,
-      status: result.status,
-      createdAt: result.created_at,
-      updatedAt: result.updated_at,
-    };
-
-    return c.json(project);
+    return c.json(mapProjectFromRow(result));
   } catch (error) {
     console.error('Error fetching project:', error);
     return c.json({ error: 'Failed to fetch project' }, 500);
@@ -662,15 +742,15 @@ async function selectInspirationsFromDatabase(
     
     sql += ` ORDER BY RANDOM() LIMIT 5`;
     
-    const result = await db.prepare<InspirationRow>(sql).bind(...params).all();
+    const result = await db.prepare(sql).bind(...params).all<InspirationRow>();
     let rows = result.results ?? [];
 
     if (rows.length < 3) {
       const generalSql = `SELECT * FROM inspirations WHERE is_active = TRUE AND category = ? ORDER BY RANDOM() LIMIT 5`;
       const generalResult = await db
-        .prepare<InspirationRow>(generalSql)
+        .prepare(generalSql)
         .bind(category)
-        .all();
+        .all<InspirationRow>();
       rows = generalResult.results ?? rows;
     }
 
